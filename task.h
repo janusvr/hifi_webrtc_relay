@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QDebug>
 #include <QString>
+#include <QSignalMapper>
 #include <QtNetwork/QUdpSocket>
 
 class Task : public QObject
@@ -18,13 +19,15 @@ public:
 public slots:
 
     void run();
-    void readPendingDatagrams();
+    void readPendingDatagrams(QString f);
 
 signals:
 
     void finished();
 
 private:
+
+    QSignalMapper * signal_mapper;
 
     QUdpSocket * client_socket;
     QHostAddress client_address;

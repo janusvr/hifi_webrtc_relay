@@ -15,108 +15,9 @@ Task::Task(QObject * parent) :
     numInitialStunRequests = 0;
     hasCompletedInitialIce = false;
     numInitialIceRequests = 0;
-    hasTCPCheckedLocalSocket = false;
     iceClientID = QUuid::createUuid();
 
     networkAccessManager = new QNetworkAccessManager();
-
-    qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << stun_server_hostname;
-    QHostInfo result_stun = QHostInfo::fromName(stun_server_hostname);
-    handleLookupResult(result_stun, &stun_server_address);
-    qDebug() << "Task::Task() - STUN server IP address: " << stun_server_address;
-
-    qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << ice_server_hostname;
-    QHostInfo result_ice = QHostInfo::fromName(ice_server_hostname);
-    handleLookupResult(result_ice, &ice_server_address);
-    qDebug() << "Task::Task() - ICE server IP address: " << ice_server_address;
-
-    updateLocalSocket();
-}
-
-void Task::updateLocalSocket()
-{
-    // attempt to use Google's DNS to confirm that local IP
-    static const QHostAddress RELIABLE_LOCAL_IP_CHECK_HOST = QHostAddress { "8.8.8.8" };
-    static const int RELIABLE_LOCAL_IP_CHECK_PORT = 53;
-
-    QTcpSocket* localIPTestSocket = new QTcpSocket;
-
-    connect(localIPTestSocket, &QTcpSocket::connected, this, &Task::connectedForLocalSocketTest);
-    connect(localIPTestSocket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(errorTestingLocalSocket()));
-
-    // attempt to connect to our reliable host
-    localIPTestSocket->connectToHost(RELIABLE_LOCAL_IP_CHECK_HOST, RELIABLE_LOCAL_IP_CHECK_PORT);
-}
-
-void Task::connectedForLocalSocketTest()
-{
-    auto localIPTestSocket = qobject_cast<QTcpSocket*>(sender());
-
-    if (localIPTestSocket) {
-        auto localHostAddress = localIPTestSocket->localAddress();
-
-        if (localHostAddress.protocol() == QAbstractSocket::IPv4Protocol) {
-            local_address = localHostAddress;
-
-            qDebug() << "Task::connectedForLocalSocketTest() - Local address: " << local_address;
-
-            hasTCPCheckedLocalSocket = true;
-        }
-
-        localIPTestSocket->deleteLater();
-    }
-}
-
-void Task::errorTestingLocalSocket()
-{
-    auto localIPTestSocket = qobject_cast<QTcpSocket*>(sender());
-
-    if (localIPTestSocket) {
-
-        // error connecting to the test socket - if we've never set our local socket using this test socket
-        // then use our possibly updated guessed local address as fallback
-        if (!hasTCPCheckedLocalSocket) {
-            local_address = getGuessedLocalAddress();
-
-            qDebug() << "Task::errorTestingLocalSocket() - Local address: " << local_address;
-
-            hasTCPCheckedLocalSocket = true;
-        }
-
-        localIPTestSocket->deleteLater();;
-    }
-}
-
-
-QHostAddress Task::getGuessedLocalAddress()
-{
-    QHostAddress localAddress;
-
-    foreach(const QNetworkInterface &networkInterface, QNetworkInterface::allInterfaces()) {
-        if (networkInterface.flags() & QNetworkInterface::IsUp
-            && networkInterface.flags() & QNetworkInterface::IsRunning
-            && networkInterface.flags() & ~QNetworkInterface::IsLoopBack) {
-            // we've decided that this is the active NIC
-            // enumerate it's addresses to grab the IPv4 address
-            foreach(const QNetworkAddressEntry &entry, networkInterface.addressEntries()) {
-                // make sure it's an IPv4 address that isn't the loopback
-                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
-
-                    // set our localAddress and break out
-                    localAddress = entry.ip();
-                    qDebug() << "Task::getGuessedLocalAddress() - " << localAddress;
-                    break;
-                }
-            }
-        }
-
-        if (!localAddress.isNull()) {
-            break;
-        }
-    }
-
-    // return the looked up local address
-    return localAddress;
 }
 
 void Task::ProcessCommandLineArguments(int argc, char * argv[])
@@ -196,24 +97,11 @@ void Task::startIce()
     connect(iceResponseTimer, &QTimer::timeout, this, &Task::sendIceRequest);
     iceResponseTimer->setInterval(ICE_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
 
-    iceResponseTimer->start();
-}
+    ice_stun_socket->bind(local_address, local_port);
+    ice_stun_socket->connectToHost("ice.highfidelity.com", 7337);
+    ice_stun_socket->waitForConnected();
 
-void Task::handleLookupResult(const QHostInfo& hostInfo, QHostAddress * addr)
-{
-    if (hostInfo.error() != QHostInfo::NoError) {
-        qDebug() << "Task::handleLookupResult() - Lookup failed for" << hostInfo.lookupId() << ":" << hostInfo.errorString();
-    } else {
-        foreach(const QHostAddress& address, hostInfo.addresses()) {
-            // just take the first IPv4 address
-            if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-                *addr = QHostAddress(address);
-                qDebug() << "Task::handleLookupResult() - QHostInfo lookup result for"
-                    << hostInfo.hostName() << "with lookup ID" << hostInfo.lookupId() << "is" << address.toString();
-                break;
-            }
-        }
-    }
+    iceResponseTimer->start();
 }
 
 void Task::readPendingDatagrams(QString f)
@@ -304,6 +192,15 @@ void Task::parseStunResponse()
                     qDebug() << "Task::parseStunResponse() - Public address: " << public_address;
                     qDebug() << "Task::parseStunResponse() - Public port: " << public_port;
 
+                    local_address = ice_stun_socket->localAddress();
+                    local_port = ice_stun_socket->localPort();
+
+                    qDebug() << "Task::parseStunResponse() - Local address: " << local_address;
+                    qDebug() << "Task::parseStunResponse() - Local port: " << local_port;
+
+                    ice_stun_socket->disconnectFromHost();
+                    ice_stun_socket->waitForDisconnected();
+
                     hasCompletedInitialStun = true;
 
                     emit stunFinished();
@@ -335,9 +232,10 @@ void Task::sendStunRequest()
 {
     const int NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL = 10;
 
-    if (hasTCPCheckedLocalSocket && numInitialStunRequests == 0)
+    if (numInitialStunRequests == 0)
     {
-        ice_stun_socket->bind(local_address);
+        ice_stun_socket->connectToHost("stun.highfidelity.io", 3478);
+        ice_stun_socket->waitForConnected();
     }
     else
     {
@@ -346,14 +244,14 @@ void Task::sendStunRequest()
 
     if (numInitialStunRequests == NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL)
     {
-        qDebug() << "Task::sendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_address << stun_server_port;
+        qDebug() << "Task::sendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
         stunResponseTimer->stop();
         stunResponseTimer->deleteLater();
         return;
     }
 
     if (!hasCompletedInitialStun) {
-        qDebug() << "Task::sendStunRequest() - Sending intial stun request to" << stun_server_hostname << stun_server_address << stun_server_port;
+        qDebug() << "Task::sendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
         ++numInitialStunRequests;
     }
     else {
@@ -365,27 +263,24 @@ void Task::sendStunRequest()
 
     char * stunRequestPacket = (char *) malloc(NUM_BYTES_STUN_HEADER);
     makeStunRequestPacket(stunRequestPacket);
-    ice_stun_socket->writeDatagram(stunRequestPacket, NUM_BYTES_STUN_HEADER, stun_server_address, stun_server_port);
+    ice_stun_socket->write(stunRequestPacket, NUM_BYTES_STUN_HEADER);
+    //ice_stun_socket->writeDatagram(stunRequestPacket, NUM_BYTES_STUN_HEADER, ice_stun_socket->peerAddress(), ice_stun_socket->peerPort());
 }
 
 void Task::sendIceRequest()
 {
     const int NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL = 10;
 
-    if (!hasTCPCheckedLocalSocket) {
-        return;
-    }
-
     if (numInitialIceRequests == NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL)
     {
-        qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_hostname << ice_server_address << ice_server_port;
+        qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_hostname << ice_server_port;
         iceResponseTimer->stop();
         iceResponseTimer->deleteLater();
         return;
     }
 
     if (!hasCompletedInitialIce) {
-        qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_hostname << ice_server_address << ice_server_port;
+        qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_hostname << ice_server_port;
         ++numInitialIceRequests;
     }
     else {
@@ -395,10 +290,11 @@ void Task::sendIceRequest()
         return;
     }
 
-    int packetSize = sizeof(uint8_t) + sizeof(char) + sizeof(iceClientID) + sizeof(public_address) + sizeof(public_port) + sizeof(local_address) + sizeof(public_port) + sizeof(domain_id);
+    int packetSize = sizeof(uint8_t) + sizeof(char) + sizeof(iceClientID) + sizeof(public_address) + sizeof(public_port) + sizeof(local_address) + sizeof(local_port) + sizeof(domain_id);
     char * iceRequestPacket = (char *) malloc(packetSize);
     makeIceRequestPacket(iceRequestPacket);
-    ice_stun_socket->writeDatagram(iceRequestPacket, packetSize, ice_server_address, ice_server_port);
+    ice_stun_socket->write(iceRequestPacket, packetSize);
+    //ice_stun_socket->writeDatagram(iceRequestPacket, packetSize, ice_stun_socket->peerAddress(), ice_stun_socket->peerPort());
 }
 
 void Task::makeStunRequestPacket(char * stunRequestPacket)
@@ -451,11 +347,11 @@ void Task::makeIceRequestPacket(char * iceRequestPacket)
     memcpy(iceRequestPacket + packetIndex, &local_address, sizeof(local_address));
     packetIndex += sizeof(local_address);
 
-    memcpy(iceRequestPacket + packetIndex, &public_port, sizeof(public_port));
-    packetIndex += sizeof(public_port);
+    memcpy(iceRequestPacket + packetIndex, &local_port, sizeof(local_port));
+    packetIndex += sizeof(local_port);
 
     memcpy(iceRequestPacket + packetIndex, &domain_id, sizeof(domain_id));
     packetIndex += sizeof(domain_id);
 
-    qDebug() << "ICE packet values" <<  packetType << (int)version << iceClientID << public_address << public_port << local_address << public_port << domain_id;
+    //qDebug() << "ICE packet values" <<  packetType << (int)version << iceClientID << public_address << public_port << local_address << local_port << domain_id;
 }

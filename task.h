@@ -29,10 +29,6 @@ public:
     void makeStunRequestPacket(char * stunRequestPacket);
     void makeIceRequestPacket(char * iceRequestPacket);
 
-    QHostAddress getGuessedLocalAddress();
-    void connectedForLocalSocketTest();
-    void updateLocalSocket();
-
 public slots:
 
     void run();
@@ -44,7 +40,6 @@ public slots:
     void sendIceRequest();
     void parseIceResponse();
 
-    void errorTestingLocalSocket();
 
 signals:
 
@@ -73,12 +68,11 @@ private:
     QHostAddress public_address;
     quint16 public_port;
     QHostAddress local_address;
+    quint16 local_port;
 
-    QHostAddress stun_server_address;
     QString stun_server_hostname;
     quint16 stun_server_port;
 
-    QHostAddress ice_server_address;
     QString ice_server_hostname;
     quint16 ice_server_port;
 
@@ -96,8 +90,6 @@ private:
 
     QByteArray sessionID;
     QUuid domain_id;
-
-    bool hasTCPCheckedLocalSocket;
 
     /*const int ICE_HEARBEAT_INTERVAL_MSECS = 2 * 1000;
     const int MAX_ICE_CONNECTION_ATTEMPTS = 5;

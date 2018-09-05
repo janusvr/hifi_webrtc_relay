@@ -1,5 +1,90 @@
 #include "task.h"
 
+PacketVersion versionForPacketType(PacketType packetType) {
+    switch (packetType) {
+        case PacketType::StunResponse:
+            return 17;
+        case PacketType::DomainList:
+            return static_cast<PacketVersion>(DomainListVersion::AuthenticationOptional);
+        case PacketType::EntityAdd:
+        case PacketType::EntityClone:
+        case PacketType::EntityEdit:
+        case PacketType::EntityData:
+        case PacketType::EntityPhysics:
+            return static_cast<PacketVersion>(EntityVersion::BloomEffect);
+        case PacketType::EntityQuery:
+            return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
+        case PacketType::AvatarIdentity:
+        case PacketType::AvatarData:
+        case PacketType::BulkAvatarData:
+        case PacketType::KillAvatar:
+            return static_cast<PacketVersion>(AvatarMixerPacketVersion::MigrateAvatarEntitiesToTraits);
+        case PacketType::MessagesData:
+            return static_cast<PacketVersion>(MessageDataVersion::TextOrBinaryData);
+        // ICE packets
+        case PacketType::ICEServerPeerInformation:
+            return 17;
+        case PacketType::ICEServerHeartbeatACK:
+            return 17;
+        case PacketType::ICEServerQuery:
+            return 17;
+        case PacketType::ICEServerHeartbeat:
+            return 18; // ICE Server Heartbeat signing
+        case PacketType::ICEPing:
+            return static_cast<PacketVersion>(IcePingVersion::SendICEPeerID);
+        case PacketType::ICEPingReply:
+            return 17;
+        case PacketType::ICEServerHeartbeatDenied:
+            return 17;
+        case PacketType::AssetMappingOperation:
+        case PacketType::AssetMappingOperationReply:
+        case PacketType::AssetGetInfo:
+        case PacketType::AssetGet:
+        case PacketType::AssetUpload:
+            return static_cast<PacketVersion>(AssetServerPacketVersion::BakingTextureMeta);
+        case PacketType::NodeIgnoreRequest:
+            return 18; // Introduction of node ignore request (which replaced an unused packet tpye)
+
+        case PacketType::DomainConnectionDenied:
+            return static_cast<PacketVersion>(DomainConnectionDeniedVersion::IncludesExtraInfo);
+
+        case PacketType::DomainConnectRequest:
+            return static_cast<PacketVersion>(DomainConnectRequestVersion::AlwaysHasMachineFingerprint);
+
+        case PacketType::DomainServerAddedNode:
+            return static_cast<PacketVersion>(DomainServerAddedNodeVersion::PermissionsGrid);
+
+        case PacketType::EntityScriptCallMethod:
+            return static_cast<PacketVersion>(EntityScriptCallMethodVersion::ClientCallable);
+
+        case PacketType::MixedAudio:
+        case PacketType::SilentAudioFrame:
+        case PacketType::InjectAudio:
+        case PacketType::MicrophoneAudioNoEcho:
+        case PacketType::MicrophoneAudioWithEcho:
+        case PacketType::AudioStreamStats:
+            return static_cast<PacketVersion>(AudioVersion::HighDynamicRangeVolume);
+        case PacketType::DomainSettings:
+            return 18;  // replace min_avatar_scale and max_avatar_scale with min_avatar_height and max_avatar_height
+        case PacketType::Ping:
+            return static_cast<PacketVersion>(PingVersion::IncludeConnectionID);
+        case PacketType::AvatarQuery:
+            return static_cast<PacketVersion>(AvatarQueryVersion::ConicalFrustums);
+        case PacketType::AvatarIdentityRequest:
+            return 22;
+        case PacketType::EntityQueryInitialResultsComplete:
+            return static_cast<PacketVersion>(EntityVersion::ParticleSpin);
+        default:
+            return 22;
+    }
+}
+
+uint qHash(const PacketType& key, uint seed) {
+    // seems odd that Qt couldn't figure out this cast itself, but this fixes a compile error after switch
+    // to strongly typed enum for PacketType
+    return qHash((quint8) key, seed);
+}
+
 Task::Task(QObject * parent) :
     QObject(parent),
     client_address(QHostAddress::LocalHost),
@@ -11,16 +96,16 @@ Task::Task(QObject * parent) :
     ice_server_hostname("ice.highfidelity.com"), //"dev-ice.highfidelity.com";
     ice_server_port(7337)
 {
-    hasCompletedInitialStun = false;
-    numInitialStunRequests = 0;
-    hasCompletedInitialIce = false;
-    numInitialIceRequests = 0;
-    iceClientID = QUuid::createUuid();
-
-    networkAccessManager = new QNetworkAccessManager();
+    has_completed_initial_stun = false;
+    num_initial_stun_requests = 0;
+    has_completed_initial_ice = false;
+    num_initial_ice_requests = 0;
+    use_custom_ice_server = false;
+    finished_domain_id_request = false;
+    ice_client_id = QUuid::createUuid();
 }
 
-void Task::ProcessCommandLineArguments(int argc, char * argv[])
+void Task::processCommandLineArguments(int argc, char * argv[])
 {
     for (int i=1; i<argc; ++i) {
         const QString s = QString(argv[i]).toLower();
@@ -34,8 +119,20 @@ void Task::ProcessCommandLineArguments(int argc, char * argv[])
             client_port = QString(argv[i+2]).toInt();
             i+=2;
         }
+        else if (s.right(7) == "-iceserver" && i+2 < argc) {
+            use_custom_ice_server = true;
+            ice_server_address = QHostAddress(QString(argv[i+1]));
+            ice_server_port = QString(argv[i+2]).toInt();
+            i+=2;
+        }
         else if (s.right(7) == "-domain" && i+1 < argc) {
-            domain_id = QUuid(QString(argv[i+1]));
+            QString d(argv[i+1]);
+            if (d.left(7) == "hifi://"){
+                domain_name = d.remove("hifi://");
+            }
+            else{
+                domain_name = d;
+            }
             i+=2;
         }
         else if (s.right(5) == "-help") {
@@ -49,8 +146,12 @@ void Task::ProcessCommandLineArguments(int argc, char * argv[])
 
 void Task::run()
 {
-    // Do processing here
-    //qDebug() << "Task::run()";
+    // Domain ID lookup
+    QNetworkAccessManager * nam = new QNetworkAccessManager(this);
+    QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    domain_reply = nam->get(request);
+    connect(domain_reply, SIGNAL(finished()), this, SLOT(domainRequestFinished()));
 
     //setup client socket for receiving
     client_socket = new QUdpSocket(this);
@@ -69,22 +170,54 @@ void Task::run()
 
     connect(signal_mapper, SIGNAL(mapped(QString)), this, SLOT(readPendingDatagrams(QString)));
 
+    // STUN server request
     ice_stun_socket = new QUdpSocket(this);
+    ice_stun_socket->connectToHost(stun_server_hostname, stun_server_port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
+    ice_stun_socket->waitForConnected();
+
     connect(ice_stun_socket, SIGNAL(readyRead()), this, SLOT(parseStunResponse()));
 
-    stunResponseTimer = new QTimer { this };
+    stun_response_timer = new QTimer { this };
     const int STUN_INITIAL_UPDATE_INTERVAL_MSECS = 250;
-    connect(stunResponseTimer, &QTimer::timeout, this, &Task::sendStunRequest);
-    stunResponseTimer->setInterval(STUN_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
-
-    //qDebug() << "Domain ID" << domain_id;
+    connect(stun_response_timer, &QTimer::timeout, this, &Task::sendStunRequest);
+    stun_response_timer->setInterval(STUN_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
 
     connect(this, SIGNAL(stunFinished()), this, SLOT(startIce()));
 
-    stunResponseTimer->start();
+    stun_response_timer->start();
 
     // Application runs indefinitely (until terminated - e.g. Ctrl+C)
     //    emit finished();
+}
+
+void Task::domainRequestFinished()
+{
+    if (domain_reply) {
+        if (domain_reply->error() == QNetworkReply::NoError && domain_reply->isOpen()) {
+            domain_reply_contents += domain_reply->readAll();
+
+            //qDebug() << domain_reply_contents;
+
+            QJsonDocument doc;
+            doc = QJsonDocument::fromJson(domain_reply_contents);
+            QJsonObject obj = doc.object();
+            QJsonObject data = obj["data"].toObject();
+            QJsonObject place = data["place"].toObject();
+            QJsonObject domain = place["domain"].toObject();
+            domain_id = QUuid(domain["id"].toString());
+
+            if (domain.contains("ice_server_address")) {
+                ice_server_address = QHostAddress(domain["ice_server_address"].toString());
+                use_custom_ice_server = true;
+            }
+        }
+        domain_reply->close();
+    }
+
+    qDebug() << "Domain name" << domain_name;
+    qDebug() << "Domain ID" << domain_id;
+
+    finished_domain_id_request = true;
 }
 
 void Task::startIce()
@@ -92,16 +225,21 @@ void Task::startIce()
     disconnect(ice_stun_socket, SIGNAL(readyRead()), this, SLOT(parseStunResponse()));
     connect(ice_stun_socket, SIGNAL(readyRead()), this, SLOT(parseIceResponse()));
 
-    iceResponseTimer = new QTimer { this };
+    ice_response_timer = new QTimer { this };
     const int ICE_INITIAL_UPDATE_INTERVAL_MSECS = 250;
-    connect(iceResponseTimer, &QTimer::timeout, this, &Task::sendIceRequest);
-    iceResponseTimer->setInterval(ICE_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
+    connect(ice_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
+    ice_response_timer->setInterval(ICE_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
 
     ice_stun_socket->bind(local_address, local_port);
-    ice_stun_socket->connectToHost("ice.highfidelity.com", 7337);
+    if (!use_custom_ice_server){
+        ice_stun_socket->connectToHost(ice_server_hostname, ice_server_port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
+    }
+    else{
+        ice_stun_socket->connectToHost(ice_server_address, ice_server_port, QIODevice::ReadWrite);
+    }
     ice_stun_socket->waitForConnected();
 
-    iceResponseTimer->start();
+    ice_response_timer->start();
 }
 
 void Task::readPendingDatagrams(QString f)
@@ -201,7 +339,7 @@ void Task::parseStunResponse()
                     ice_stun_socket->disconnectFromHost();
                     ice_stun_socket->waitForDisconnected();
 
-                    hasCompletedInitialStun = true;
+                    has_completed_initial_stun = true;
 
                     emit stunFinished();
 
@@ -225,44 +363,39 @@ void Task::parseStunResponse()
 void Task::parseIceResponse()
 {
     qDebug() << "ICE RESPONSE";
-    hasCompletedInitialIce = true;
+    has_completed_initial_ice = true;
 }
 
 void Task::sendStunRequest()
 {
     const int NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL = 10;
 
-    if (numInitialStunRequests == 0)
-    {
-        ice_stun_socket->connectToHost("stun.highfidelity.io", 3478);
-        ice_stun_socket->waitForConnected();
-    }
-    else
-    {
+    if (!finished_domain_id_request) {
         return;
     }
 
-    if (numInitialStunRequests == NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL)
+    if (num_initial_stun_requests == NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL)
     {
         qDebug() << "Task::sendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
-        stunResponseTimer->stop();
-        stunResponseTimer->deleteLater();
+        stun_response_timer->stop();
+        stun_response_timer->deleteLater();
         return;
     }
 
-    if (!hasCompletedInitialStun) {
+    if (!has_completed_initial_stun) {
         qDebug() << "Task::sendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
-        ++numInitialStunRequests;
+        ++num_initial_stun_requests;
     }
     else {
         qDebug() << "Task::sendStunRequest() - Completed stun request";
-        stunResponseTimer->stop();
-        stunResponseTimer->deleteLater();
+        stun_response_timer->stop();
+        stun_response_timer->deleteLater();
         return;
     }
 
     char * stunRequestPacket = (char *) malloc(NUM_BYTES_STUN_HEADER);
     makeStunRequestPacket(stunRequestPacket);
+    qDebug () << "Task::sendStunRequest() - STUN address:" << ice_stun_socket->peerAddress() << "STUN port:" << ice_stun_socket->peerPort();
     ice_stun_socket->write(stunRequestPacket, NUM_BYTES_STUN_HEADER);
     //ice_stun_socket->writeDatagram(stunRequestPacket, NUM_BYTES_STUN_HEADER, ice_stun_socket->peerAddress(), ice_stun_socket->peerPort());
 }
@@ -271,28 +404,37 @@ void Task::sendIceRequest()
 {
     const int NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL = 10;
 
-    if (numInitialIceRequests == NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL)
+    if (num_initial_ice_requests == NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL)
     {
-        qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_hostname << ice_server_port;
-        iceResponseTimer->stop();
-        iceResponseTimer->deleteLater();
+        if (use_custom_ice_server)
+            qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
+        else
+            qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_hostname << ice_server_port;
+
+        ice_response_timer->stop();
+        ice_response_timer->deleteLater();
         return;
     }
 
-    if (!hasCompletedInitialIce) {
-        qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_hostname << ice_server_port;
-        ++numInitialIceRequests;
+    if (!has_completed_initial_ice) {
+        if (use_custom_ice_server)
+            qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_address << ice_server_port;
+        else
+            qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_hostname << ice_server_port;
+
+        ++num_initial_ice_requests;
     }
     else {
         qDebug() << "Task::sendIceRequest() - Completed ice request";
-        iceResponseTimer->stop();
-        iceResponseTimer->deleteLater();
+        ice_response_timer->stop();
+        ice_response_timer->deleteLater();
         return;
     }
 
-    int packetSize = sizeof(uint8_t) + sizeof(char) + sizeof(iceClientID) + sizeof(public_address) + sizeof(public_port) + sizeof(local_address) + sizeof(local_port) + sizeof(domain_id);
+    int packetSize = sizeof(PacketType) + sizeof(PacketVersion) + sizeof(QUuid) + sizeof(QHostAddress) + sizeof(quint16) + sizeof(QHostAddress) + sizeof(quint16) + sizeof(QUuid);
     char * iceRequestPacket = (char *) malloc(packetSize);
     makeIceRequestPacket(iceRequestPacket);
+    qDebug () << "Task::sendIceRequest() - ICE address:" << ice_stun_socket->peerAddress() << "ICE port:" << ice_stun_socket->peerPort();
     ice_stun_socket->write(iceRequestPacket, packetSize);
     //ice_stun_socket->writeDatagram(iceRequestPacket, packetSize, ice_stun_socket->peerAddress(), ice_stun_socket->peerPort());
 }
@@ -324,34 +466,34 @@ void Task::makeStunRequestPacket(char * stunRequestPacket)
 
 void Task::makeIceRequestPacket(char * iceRequestPacket)
 {
-    uint8_t packetType = 23;
-    char version = 17;
+    PacketType packetType = PacketType::ICEServerQuery;
+    PacketVersion version = versionForPacketType(packetType);
 
     int packetIndex = 0;
 
-    memcpy(iceRequestPacket + packetIndex, &packetType, sizeof(packetType));
-    packetIndex += sizeof(packetType);
+    memcpy(iceRequestPacket + packetIndex, &packetType, sizeof(PacketType));
+    packetIndex += sizeof(PacketType);
 
-    memcpy(iceRequestPacket + packetIndex, &version, sizeof(version));
-    packetIndex += sizeof(version);
+    memcpy(iceRequestPacket + packetIndex, &version, sizeof(PacketVersion));
+    packetIndex += sizeof(PacketVersion);
 
-    memcpy(iceRequestPacket + packetIndex, &iceClientID, sizeof(iceClientID));
-    packetIndex += sizeof(iceClientID);
+    memcpy(iceRequestPacket + packetIndex, &ice_client_id, sizeof(QUuid));
+    packetIndex += sizeof(QUuid);
 
-    memcpy(iceRequestPacket + packetIndex, &public_address, sizeof(public_address));
-    packetIndex += sizeof(public_address);
+    memcpy(iceRequestPacket + packetIndex, &public_address, sizeof(QHostAddress));
+    packetIndex += sizeof(QHostAddress);
 
-    memcpy(iceRequestPacket + packetIndex, &public_port, sizeof(public_port));
-    packetIndex += sizeof(public_port);
+    memcpy(iceRequestPacket + packetIndex, &public_port, sizeof(quint16));
+    packetIndex += sizeof(quint16);
 
-    memcpy(iceRequestPacket + packetIndex, &local_address, sizeof(local_address));
-    packetIndex += sizeof(local_address);
+    memcpy(iceRequestPacket + packetIndex, &local_address, sizeof(QHostAddress));
+    packetIndex += sizeof(QHostAddress);
 
-    memcpy(iceRequestPacket + packetIndex, &local_port, sizeof(local_port));
-    packetIndex += sizeof(local_port);
+    memcpy(iceRequestPacket + packetIndex, &local_port, sizeof(quint16));
+    packetIndex += sizeof(quint16);
 
-    memcpy(iceRequestPacket + packetIndex, &domain_id, sizeof(domain_id));
-    packetIndex += sizeof(domain_id);
+    memcpy(iceRequestPacket + packetIndex, &domain_id, sizeof(QUuid));
+    packetIndex += sizeof(QUuid);
 
-    //qDebug() << "ICE packet values" <<  packetType << (int)version << iceClientID << public_address << public_port << local_address << local_port << domain_id;
+    //qDebug() << "ICE packet values" <<  uint8_t(packetType) << (int)version << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
 }

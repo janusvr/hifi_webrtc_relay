@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
     // the task signals finished.
     QObject::connect(task, SIGNAL(finished()), &a, SLOT(quit()));
 
-    task->ProcessCommandLineArguments(argc, argv);
+    task->processCommandLineArguments(argc, argv);
 
     // This will run the task from the application event loop.
     QTimer::singleShot(0, task, SLOT(run()));

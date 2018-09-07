@@ -3,7 +3,6 @@
 
 #include <QObject>
 #include <QDebug>
-#include <QHostInfo>
 #include <QtNetwork>
 #include <QString>
 #include <QSignalMapper>
@@ -11,324 +10,12 @@
 #include <QTimer>
 #include <QUuid>
 
+#include "packet.h"
+
 const uint32_t RFC_5389_MAGIC_COOKIE = 0x2112A442;
 const int NUM_BYTES_STUN_HEADER = 20;
 
 const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
-
-class PacketTypeEnum {
-public:
-    // If adding a new packet packetType, you can replace one marked usable or add at the end.
-    // This enum must hold 256 or fewer packet types (so the value is <= 255) since it is statically typed as a uint8_t
-    enum class Value : uint8_t {
-        Unknown,
-        StunResponse,
-        DomainList,
-        Ping,
-        PingReply,
-        KillAvatar,
-        AvatarData,
-        InjectAudio,
-        MixedAudio,
-        MicrophoneAudioNoEcho,
-        MicrophoneAudioWithEcho,
-        BulkAvatarData,
-        SilentAudioFrame,
-        DomainListRequest,
-        RequestAssignment,
-        CreateAssignment,
-        DomainConnectionDenied,
-        MuteEnvironment,
-        AudioStreamStats,
-        DomainServerPathQuery,
-        DomainServerPathResponse,
-        DomainServerAddedNode,
-        ICEServerPeerInformation,
-        ICEServerQuery,
-        OctreeStats,
-        SetAvatarTraits,
-        AvatarIdentityRequest,
-        AssignmentClientStatus,
-        NoisyMute,
-        AvatarIdentity,
-        NodeIgnoreRequest,
-        DomainConnectRequest,
-        DomainServerRequireDTLS,
-        NodeJsonStats,
-        OctreeDataNack,
-        StopNode,
-        AudioEnvironment,
-        EntityEditNack,
-        ICEServerHeartbeat,
-        ICEPing,
-        ICEPingReply,
-        EntityData,
-        EntityQuery,
-        EntityAdd,
-        EntityErase,
-        EntityEdit,
-        DomainServerConnectionToken,
-        DomainSettingsRequest,
-        DomainSettings,
-        AssetGet,
-        AssetGetReply,
-        AssetUpload,
-        AssetUploadReply,
-        AssetGetInfo,
-        AssetGetInfoReply,
-        DomainDisconnectRequest,
-        DomainServerRemovedNode,
-        MessagesData,
-        MessagesSubscribe,
-        MessagesUnsubscribe,
-        ICEServerHeartbeatDenied,
-        AssetMappingOperation,
-        AssetMappingOperationReply,
-        ICEServerHeartbeatACK,
-        NegotiateAudioFormat,
-        SelectedAudioFormat,
-        MoreEntityShapes,
-        NodeKickRequest,
-        NodeMuteRequest,
-        RadiusIgnoreRequest,
-        UsernameFromIDRequest,
-        UsernameFromIDReply,
-        AvatarQuery,
-        RequestsDomainListData,
-        PerAvatarGainSet,
-        EntityScriptGetStatus,
-        EntityScriptGetStatusReply,
-        ReloadEntityServerScript,
-        EntityPhysics,
-        EntityServerScriptLog,
-        AdjustAvatarSorting,
-        OctreeFileReplacement,
-        CollisionEventChanges,
-        ReplicatedMicrophoneAudioNoEcho,
-        ReplicatedMicrophoneAudioWithEcho,
-        ReplicatedInjectAudio,
-        ReplicatedSilentAudioFrame,
-        ReplicatedAvatarIdentity,
-        ReplicatedKillAvatar,
-        ReplicatedBulkAvatarData,
-        DomainContentReplacementFromUrl,
-        ChallengeOwnership,
-        EntityScriptCallMethod,
-        ChallengeOwnershipRequest,
-        ChallengeOwnershipReply,
-
-        OctreeDataFileRequest,
-        OctreeDataFileReply,
-        OctreeDataPersist,
-
-        EntityClone,
-        EntityQueryInitialResultsComplete,
-        BulkAvatarTraits,
-
-        NUM_PACKET_TYPE
-    };
-
-    const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> getReplicatedPacketMapping() {
-        const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> REPLICATED_PACKET_MAPPING {
-            { PacketTypeEnum::Value::MicrophoneAudioNoEcho, PacketTypeEnum::Value::ReplicatedMicrophoneAudioNoEcho },
-            { PacketTypeEnum::Value::MicrophoneAudioWithEcho, PacketTypeEnum::Value::ReplicatedMicrophoneAudioWithEcho },
-            { PacketTypeEnum::Value::InjectAudio, PacketTypeEnum::Value::ReplicatedInjectAudio },
-            { PacketTypeEnum::Value::SilentAudioFrame, PacketTypeEnum::Value::ReplicatedSilentAudioFrame },
-            { PacketTypeEnum::Value::AvatarIdentity, PacketTypeEnum::Value::ReplicatedAvatarIdentity },
-            { PacketTypeEnum::Value::KillAvatar, PacketTypeEnum::Value::ReplicatedKillAvatar },
-            { PacketTypeEnum::Value::BulkAvatarData, PacketTypeEnum::Value::ReplicatedBulkAvatarData }
-        };
-        return REPLICATED_PACKET_MAPPING;
-    }
-
-    const static QSet<PacketTypeEnum::Value> getNonVerifiedPackets() {
-        const static QSet<PacketTypeEnum::Value> NON_VERIFIED_PACKETS = QSet<PacketTypeEnum::Value>()
-            << PacketTypeEnum::Value::NodeJsonStats
-            << PacketTypeEnum::Value::EntityQuery
-            << PacketTypeEnum::Value::OctreeDataNack
-            << PacketTypeEnum::Value::EntityEditNack
-            << PacketTypeEnum::Value::DomainListRequest
-            << PacketTypeEnum::Value::StopNode
-            << PacketTypeEnum::Value::DomainDisconnectRequest
-            << PacketTypeEnum::Value::UsernameFromIDRequest
-            << PacketTypeEnum::Value::NodeKickRequest
-            << PacketTypeEnum::Value::NodeMuteRequest;
-        return NON_VERIFIED_PACKETS;
-    }
-
-    const static QSet<PacketTypeEnum::Value> getNonSourcedPackets() {
-        const static QSet<PacketTypeEnum::Value> NON_SOURCED_PACKETS = QSet<PacketTypeEnum::Value>()
-            << PacketTypeEnum::Value::StunResponse << PacketTypeEnum::Value::CreateAssignment
-            << PacketTypeEnum::Value::RequestAssignment << PacketTypeEnum::Value::DomainServerRequireDTLS
-            << PacketTypeEnum::Value::DomainConnectRequest << PacketTypeEnum::Value::DomainList
-            << PacketTypeEnum::Value::DomainConnectionDenied << PacketTypeEnum::Value::DomainServerPathQuery
-            << PacketTypeEnum::Value::DomainServerPathResponse << PacketTypeEnum::Value::DomainServerAddedNode
-            << PacketTypeEnum::Value::DomainServerConnectionToken << PacketTypeEnum::Value::DomainSettingsRequest
-            << PacketTypeEnum::Value::OctreeDataFileRequest << PacketTypeEnum::Value::OctreeDataFileReply
-            << PacketTypeEnum::Value::OctreeDataPersist << PacketTypeEnum::Value::DomainContentReplacementFromUrl
-            << PacketTypeEnum::Value::DomainSettings << PacketTypeEnum::Value::ICEServerPeerInformation
-            << PacketTypeEnum::Value::ICEServerQuery << PacketTypeEnum::Value::ICEServerHeartbeat
-            << PacketTypeEnum::Value::ICEServerHeartbeatACK << PacketTypeEnum::Value::ICEPing
-            << PacketTypeEnum::Value::ICEPingReply << PacketTypeEnum::Value::ICEServerHeartbeatDenied
-            << PacketTypeEnum::Value::AssignmentClientStatus << PacketTypeEnum::Value::StopNode
-            << PacketTypeEnum::Value::DomainServerRemovedNode << PacketTypeEnum::Value::UsernameFromIDReply
-            << PacketTypeEnum::Value::OctreeFileReplacement << PacketTypeEnum::Value::ReplicatedMicrophoneAudioNoEcho
-            << PacketTypeEnum::Value::ReplicatedMicrophoneAudioWithEcho << PacketTypeEnum::Value::ReplicatedInjectAudio
-            << PacketTypeEnum::Value::ReplicatedSilentAudioFrame << PacketTypeEnum::Value::ReplicatedAvatarIdentity
-            << PacketTypeEnum::Value::ReplicatedKillAvatar << PacketTypeEnum::Value::ReplicatedBulkAvatarData;
-        return NON_SOURCED_PACKETS;
-    }
-
-    const static QSet<PacketTypeEnum::Value> getDomainSourcedPackets() {
-        const static QSet<PacketTypeEnum::Value> DOMAIN_SOURCED_PACKETS = QSet<PacketTypeEnum::Value>()
-            << PacketTypeEnum::Value::AssetMappingOperation
-            << PacketTypeEnum::Value::AssetGet
-            << PacketTypeEnum::Value::AssetUpload;
-        return DOMAIN_SOURCED_PACKETS;
-    }
-
-    const static QSet<PacketTypeEnum::Value> getDomainIgnoredVerificationPackets() {
-        const static QSet<PacketTypeEnum::Value> DOMAIN_IGNORED_VERIFICATION_PACKETS = QSet<PacketTypeEnum::Value>()
-            << PacketTypeEnum::Value::AssetMappingOperationReply
-            << PacketTypeEnum::Value::AssetGetReply
-            << PacketTypeEnum::Value::AssetUploadReply;
-        return DOMAIN_IGNORED_VERIFICATION_PACKETS;
-    }
-};
-
-using PacketType = PacketTypeEnum::Value;
-typedef char PacketVersion;
-
-PacketVersion versionForPacketType(PacketType packetType);
-uint qHash(const PacketType& key, uint seed);
-
-// Due to the different legacy behaviour, we need special processing for domains that were created before
-// the zone inheritance modes were added.  These have version numbers up to 80
-enum class EntityVersion : PacketVersion {
-    StrokeColorProperty = 0,
-    HasDynamicOwnershipTests,
-    HazeEffect,
-    StaticCertJsonVersionOne,
-    OwnershipChallengeFix,
-    ZoneLightInheritModes = 82,
-    ZoneStageRemoved,
-    SoftEntities,
-    MaterialEntities,
-    ShadowControl,
-    MaterialData,
-    CloneableData,
-    CollisionMask16Bytes,
-    YieldSimulationOwnership,
-    ParticleEntityFix,
-    ParticleSpin,
-    BloomEffect
-};
-
-enum class EntityScriptCallMethodVersion : PacketVersion {
-    ServerCallable = 18,
-    ClientCallable = 19
-};
-
-enum class EntityQueryPacketVersion: PacketVersion {
-    JSONFilter = 18,
-    JSONFilterWithFamilyTree = 19,
-    ConnectionIdentifier = 20,
-    RemovedJurisdictions = 21,
-    MultiFrustumQuery = 22,
-    ConicalFrustums = 23
-};
-
-enum class AssetServerPacketVersion: PacketVersion {
-    VegasCongestionControl = 19,
-    RangeRequestSupport,
-    RedirectedMappings,
-    BakingTextureMeta
-};
-
-enum class AvatarMixerPacketVersion : PacketVersion {
-    TranslationSupport = 17,
-    SoftAttachmentSupport,
-    AvatarEntities,
-    AbsoluteSixByteRotations,
-    SensorToWorldMat,
-    HandControllerJoints,
-    HasKillAvatarReason,
-    SessionDisplayName,
-    Unignore,
-    ImmediateSessionDisplayNameUpdates,
-    VariableAvatarData,
-    AvatarAsChildFixes,
-    StickAndBallDefaultAvatar,
-    IdentityPacketsIncludeUpdateTime,
-    AvatarIdentitySequenceId,
-    MannequinDefaultAvatar,
-    AvatarIdentitySequenceFront,
-    IsReplicatedInAvatarIdentity,
-    AvatarIdentityLookAtSnapping,
-    UpdatedMannequinDefaultAvatar,
-    AvatarJointDefaultPoseFlags,
-    FBXReaderNodeReparenting,
-    FixMannequinDefaultAvatarFeet,
-    ProceduralFaceMovementFlagsAndBlendshapes,
-    FarGrabJoints,
-    MigrateSkeletonURLToTraits,
-    MigrateAvatarEntitiesToTraits
-};
-
-enum class DomainConnectRequestVersion : PacketVersion {
-    NoHostname = 17,
-    HasHostname,
-    HasProtocolVersions,
-    HasMACAddress,
-    HasMachineFingerprint,
-    AlwaysHasMachineFingerprint
-};
-
-enum class DomainConnectionDeniedVersion : PacketVersion {
-    ReasonMessageOnly = 17,
-    IncludesReasonCode,
-    IncludesExtraInfo
-};
-
-enum class DomainServerAddedNodeVersion : PacketVersion {
-    PrePermissionsGrid = 17,
-    PermissionsGrid
-};
-
-enum class DomainListVersion : PacketVersion {
-    PrePermissionsGrid = 18,
-    PermissionsGrid,
-    GetUsernameFromUUIDSupport,
-    GetMachineFingerprintFromUUIDSupport,
-    AuthenticationOptional
-};
-
-enum class AudioVersion : PacketVersion {
-    HasCompressedAudio = 17,
-    CodecNameInAudioPackets,
-    Exactly10msAudioPackets,
-    TerminatingStreamStats,
-    SpaceBubbleChanges,
-    HasPersonalMute,
-    HighDynamicRangeVolume,
-};
-
-enum class MessageDataVersion : PacketVersion {
-    TextOrBinaryData = 18
-};
-
-enum class IcePingVersion : PacketVersion {
-    SendICEPeerID = 18
-};
-
-enum class PingVersion : PacketVersion {
-    IncludeConnectionID = 18
-};
-
-enum class AvatarQueryVersion : PacketVersion {
-    SendMultipleFrustums = 21,
-    ConicalFrustums = 22
-};
 
 class Task : public QObject
 {
@@ -341,13 +28,13 @@ public:
     void handleLookupResult(const QHostInfo& hostInfo, QHostAddress * addr);
 
     void makeStunRequestPacket(char * stunRequestPacket);
-    void makeIceRequestPacket(char * iceRequestPacket);
 
 public slots:
 
     void run();
     void readPendingDatagrams(QString f);
     void startIce();
+    void startDomainConnect();
 
     void sendStunRequest();
     void parseStunResponse();
@@ -359,6 +46,7 @@ public slots:
 signals:
 
     void stunFinished();
+    void iceFinished();
     void finished();
 
 private:
@@ -378,7 +66,7 @@ private:
     QHostAddress server_address;
     quint16 server_port;
 
-    QUdpSocket * ice_stun_socket;
+    QUdpSocket * hifi_socket;
 
     QHostAddress public_address;
     quint16 public_port;
@@ -404,12 +92,15 @@ private:
 
     QString domain_name;
     QUuid domain_id;
+    QHostAddress domain_public_address;
+    quint16 domain_public_port;
+    QHostAddress domain_local_address;
+    quint16 domain_local_port;
 
     bool use_custom_ice_server;
 
     QNetworkReply * domain_reply;
     QByteArray domain_reply_contents;
     bool finished_domain_id_request;
-
 };
 #endif // TASK_H

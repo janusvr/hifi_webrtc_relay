@@ -108,6 +108,55 @@ Packet::Packet(uint32_t s, PacketType t)
     adjustPayloadStartAndCapacity(Packet::headerSize(false) + Packet::localHeaderSize(type));
 }
 
+Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
+{
+    packetSize = size;
+
+    packet.reset(new char[size]());
+    memcpy(packet.get(),data,size);
+
+    payloadStart = packet.get();
+    payloadCapacity = size;
+    payloadSize = size;
+
+    uint32_t* seqNumBitField = reinterpret_cast<uint32_t*>(packet.get());
+
+    bool isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
+    bool isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
+    bool obfuscationLevel = (int)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
+    uint32_t sequenceNumber = (uint32_t)(*seqNumBitField & SEQUENCE_NUMBER_MASK ); // Remove the bit field
+
+    //qDebug() << isReliable << isPartOfMessage << obfuscationLevel << sequenceNumber;
+
+    if (isPartOfMessage) {
+        uint32_t* messageNumberAndBitField = seqNumBitField + 1;
+
+        uint32_t messageNumber = *messageNumberAndBitField & MESSAGE_NUMBER_MASK;
+        short packetPosition = static_cast<short>(*messageNumberAndBitField >> PACKET_POSITION_OFFSET);
+
+        uint32_t* messagePartNumber = messageNumberAndBitField + 1;
+
+        //qDebug() << messageNumber << (int) packetPosition << messagePartNumber;
+    }
+
+    adjustPayloadStartAndCapacity(Packet::headerSize(isPartOfMessage), payloadSize > 0);
+
+    /*if (getObfuscationLevel() != Packet::NoObfuscation) {
+        obfuscate(NoObfuscation); // Undo obfuscation
+    }*/
+
+    auto headerOffset = Packet::headerSize(isPartOfMessage);
+    type = *reinterpret_cast<const PacketType*>(packet.get() + headerOffset);
+
+    version = *reinterpret_cast<const PacketVersion*>(packet.get() + headerOffset + sizeof(PacketType));
+    quint16 local_id =  *reinterpret_cast<const PacketVersion*>(packet.get() + headerOffset + sizeof(PacketType));
+
+    adjustPayloadStartAndCapacity(Packet::localHeaderSize(type), payloadSize > 0);
+
+    //int h = (Packet::localHeaderSize(type) + Packet::headerSize(isPartOfMessage));
+    //qDebug() << h << (quint8)type << (int)version << local_id;
+}
+
 int Packet::headerSize(bool isPartOfMessage) {
     return sizeof(uint32_t) +
             (isPartOfMessage ? 2*sizeof(uint32_t) : 0);
@@ -128,6 +177,17 @@ std::unique_ptr<Packet> Packet::create(uint32_t s, PacketType t)
 
     return packet;
 }
+
+std::unique_ptr<Packet> Packet::fromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
+{
+    // allocate memory
+    auto packet = std::unique_ptr<Packet>(new Packet(data, size, addr, port));
+
+    packet->open(QIODevice::ReadOnly);
+
+    return packet;
+}
+
 
 void Packet::adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize)
 {

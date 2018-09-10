@@ -16,6 +16,8 @@ const uint32_t RFC_5389_MAGIC_COOKIE = 0x2112A442;
 const int NUM_BYTES_STUN_HEADER = 20;
 
 const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
+const int HIFI_INITIAL_UPDATE_INTERVAL_MSEC = 250;
+const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
 
 class Task : public QObject
 {
@@ -34,12 +36,15 @@ public slots:
     void run();
     void readPendingDatagrams(QString f);
     void startIce();
+    void startStun();
     void startDomainConnect();
 
     void sendStunRequest();
     void parseStunResponse();
     void sendIceRequest();
     void parseIceResponse();
+    void sendDomainConnectRequest();
+    void parseDomainConnectResponse();
 
     void domainRequestFinished();
 
@@ -67,6 +72,7 @@ private:
     quint16 server_port;
 
     QUdpSocket * hifi_socket;
+    QTimer * hifi_response_timer;
 
     QHostAddress public_address;
     quint16 public_port;
@@ -80,15 +86,10 @@ private:
     QHostAddress ice_server_address;
     quint16 ice_server_port;
 
-    QTimer * stun_response_timer;
-    bool has_completed_initial_stun;
-    int num_initial_stun_requests;
-
     QUuid ice_client_id;
 
-    QTimer * ice_response_timer;
-    bool has_completed_initial_ice;
-    int num_initial_ice_requests;
+    bool has_completed_current_request;
+    int num_requests;
 
     QString domain_name;
     QUuid domain_id;

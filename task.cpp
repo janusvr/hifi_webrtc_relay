@@ -11,10 +11,6 @@ Task::Task(QObject * parent) :
     ice_server_hostname("ice.highfidelity.com"), //"dev-ice.highfidelity.com";
     ice_server_port(7337)
 {
-    has_completed_initial_stun = false;
-    num_initial_stun_requests = 0;
-    has_completed_initial_ice = false;
-    num_initial_ice_requests = 0;
     use_custom_ice_server = false;
     finished_domain_id_request = false;
     ice_client_id = QUuid::createUuid();
@@ -85,22 +81,10 @@ void Task::run()
 
     connect(signal_mapper, SIGNAL(mapped(QString)), this, SLOT(readPendingDatagrams(QString)));
 
-    // STUN server request
-    hifi_socket = new QUdpSocket(this);
-    hifi_socket->connectToHost(stun_server_hostname, stun_server_port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
-    hifi_socket->waitForConnected();
-
-    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseStunResponse()));
-
-    stun_response_timer = new QTimer { this };
-    const int STUN_INITIAL_UPDATE_INTERVAL_MSECS = 250;
-    connect(stun_response_timer, &QTimer::timeout, this, &Task::sendStunRequest);
-    stun_response_timer->setInterval(STUN_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
-
     connect(this, SIGNAL(stunFinished()), this, SLOT(startIce()));
     connect(this, SIGNAL(iceFinished()), this, SLOT(startDomainConnect()));
 
-    stun_response_timer->start();
+    startStun();
 
     // Application runs indefinitely (until terminated - e.g. Ctrl+C)
     //    emit finished();
@@ -130,10 +114,28 @@ void Task::domainRequestFinished()
         domain_reply->close();
     }
 
-    qDebug() << "Domain name" << domain_name;
-    qDebug() << "Domain ID" << domain_id;
+    qDebug() << "Task::domainRequestFinished() - Domain name" << domain_name;
+    qDebug() << "Task::domainRequestFinished() - Domain ID" << domain_id;
 
     finished_domain_id_request = true;
+}
+
+void Task::startStun()
+{
+    hifi_socket = new QUdpSocket(this);
+    hifi_socket->connectToHost(stun_server_hostname, stun_server_port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
+    hifi_socket->waitForConnected();
+
+    num_requests = 0;
+    has_completed_current_request = false;
+
+    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseStunResponse()));
+
+    hifi_response_timer = new QTimer { this };
+    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendStunRequest);
+    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+
+    hifi_response_timer->start();
 }
 
 void Task::startIce()
@@ -141,10 +143,13 @@ void Task::startIce()
     disconnect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseStunResponse()));
     connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseIceResponse()));
 
-    ice_response_timer = new QTimer { this };
-    const int ICE_INITIAL_UPDATE_INTERVAL_MSECS = 250;
-    connect(ice_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
-    ice_response_timer->setInterval(ICE_INITIAL_UPDATE_INTERVAL_MSECS); // 250ms, Qt::CoarseTimer acceptable
+    num_requests = 0;
+    has_completed_current_request = false;
+
+    disconnect(hifi_response_timer, &QTimer::timeout, this, &Task::sendStunRequest);
+    hifi_response_timer = new QTimer { this };
+    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
+    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     hifi_socket->bind(local_address, local_port);
     if (!use_custom_ice_server){
@@ -155,12 +160,27 @@ void Task::startIce()
     }
     hifi_socket->waitForConnected();
 
-    ice_response_timer->start();
+    hifi_response_timer->start();
 }
 
 void Task::startDomainConnect()
 {
+    disconnect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseIceResponse()));
+    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseDomainConnectResponse()));
 
+    num_requests = 0;
+    has_completed_current_request = false;
+
+    disconnect(hifi_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
+    hifi_response_timer = new QTimer { this };
+    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendDomainConnectRequest);
+    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+
+    hifi_socket->bind(local_address, local_port);
+    hifi_socket->connectToHost(domain_public_address, domain_public_port, QIODevice::ReadWrite);
+    hifi_socket->waitForConnected();
+
+    hifi_response_timer->start();
 }
 
 void Task::readPendingDatagrams(QString f)
@@ -260,7 +280,7 @@ void Task::parseStunResponse()
                     hifi_socket->disconnectFromHost();
                     hifi_socket->waitForDisconnected();
 
-                    has_completed_initial_stun = true;
+                    has_completed_current_request = true;
 
                     emit stunFinished();
 
@@ -283,37 +303,62 @@ void Task::parseStunResponse()
 
 void Task::parseIceResponse()
 {
-    qDebug() << "ICE RESPONSE";
     while (hifi_socket->hasPendingDatagrams()) {
-        has_completed_initial_ice = true;
+        QByteArray datagram;
+        datagram.resize(hifi_socket->pendingDatagramSize());
+        QHostAddress sender;
+        quint16 senderPort;
+
+        hifi_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+
+        //qDebug() << "Task::parseIceResponse() - read packet from " << sender << ":" << senderPort << " of size " << datagram.size() << " bytes";
+
+        std::unique_ptr<Packet> iceResponsePacket = Packet::fromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, senderPort);
+        QDataStream iceResponseStream(iceResponsePacket.get()->readAll());
+        QUuid domain_uuid;
+        iceResponseStream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
+
+        if (domain_uuid != domain_id){
+            qDebug() << "Task::parseIceResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
+        }
+
+        qDebug() << "Task::parseIceResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
+
+        hifi_socket->disconnectFromHost();
+        hifi_socket->waitForDisconnected();
+
+        has_completed_current_request = true;
         emit iceFinished();
     }
 }
 
+void Task::parseDomainConnectResponse()
+{
+    return;
+}
+
 void Task::sendStunRequest()
 {
-    const int NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL = 10;
-
     if (!finished_domain_id_request) {
         return;
     }
 
-    if (num_initial_stun_requests == NUM_INITIAL_STUN_REQUESTS_BEFORE_FAIL)
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
         qDebug() << "Task::sendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
-        stun_response_timer->stop();
-        stun_response_timer->deleteLater();
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
         return;
     }
 
-    if (!has_completed_initial_stun) {
+    if (!has_completed_current_request) {
         qDebug() << "Task::sendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
-        ++num_initial_stun_requests;
+        ++num_requests;
     }
     else {
-        qDebug() << "Task::sendStunRequest() - Completed stun request";
-        stun_response_timer->stop();
-        stun_response_timer->deleteLater();
+        //qDebug() << "Task::sendStunRequest() - Completed stun request";
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
         return;
     }
 
@@ -326,32 +371,30 @@ void Task::sendStunRequest()
 
 void Task::sendIceRequest()
 {
-    const int NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL = 10;
-
-    if (num_initial_ice_requests == NUM_INITIAL_ICE_REQUESTS_BEFORE_FAIL)
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
         if (use_custom_ice_server)
             qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
         else
             qDebug() << "Task::sendIceRequest() - Stopping ice requests to" << ice_server_hostname << ice_server_port;
 
-        ice_response_timer->stop();
-        ice_response_timer->deleteLater();
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
         return;
     }
 
-    if (!has_completed_initial_ice) {
+    if (!has_completed_current_request) {
         if (use_custom_ice_server)
             qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_address << ice_server_port;
         else
             qDebug() << "Task::sendIceRequest() - Sending intial ice request to" << ice_server_hostname << ice_server_port;
 
-        ++num_initial_ice_requests;
+        ++num_requests;
     }
     else {
-        qDebug() << "Task::sendIceRequest() - Completed ice request";
-        ice_response_timer->stop();
-        ice_response_timer->deleteLater();
+        //qDebug() << "Task::sendIceRequest() - Completed ice request";
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
         return;
     }
 
@@ -366,6 +409,11 @@ void Task::sendIceRequest()
 
     hifi_socket->write(iceRequestPacket->getData(), iceRequestPacket->getDataSize());
     //hifi_socket->writeDatagram(iceRequestPacket, packetSize, hifi_socket->peerAddress(), hifi_socket->peerPort());
+}
+
+void Task::sendDomainConnectRequest()
+{
+
 }
 
 void Task::makeStunRequestPacket(char * stunRequestPacket)

@@ -326,6 +326,39 @@ public:
     static const int UDP_IPV4_HEADER_SIZE = 28;
     static const int MAX_PACKET_SIZE_WITH_UDP_HEADER = 1492;
     static const int MAX_PACKET_SIZE = MAX_PACKET_SIZE_WITH_UDP_HEADER - UDP_IPV4_HEADER_SIZE;
+    static const int CONTROL_BIT_SIZE = 1;
+    static const int RELIABILITY_BIT_SIZE = 1;
+    static const int MESSAGE_BIT_SIZE = 1;
+    static const int OBFUSCATION_LEVEL_SIZE = 2;
+    static const int SEQUENCE_NUMBER_SIZE= 27;
+
+    static const int PACKET_POSITION_SIZE = 2;
+    static const int MESSAGE_NUMBER_SIZE = 30;
+
+    static const int MESSAGE_PART_NUMBER_SIZE = 32;
+
+    static const int SEQUENCE_NUMBER_OFFSET = 0;
+    static const int OBFUSCATION_LEVEL_OFFSET = SEQUENCE_NUMBER_OFFSET + SEQUENCE_NUMBER_SIZE;
+    static const int MESSAGE_BIT_OFFSET = OBFUSCATION_LEVEL_OFFSET + OBFUSCATION_LEVEL_SIZE;
+    static const int RELIABILITY_BIT_OFFSET = MESSAGE_BIT_OFFSET + MESSAGE_BIT_SIZE;
+    static const int CONTROL_BIT_OFFSET = RELIABILITY_BIT_OFFSET + RELIABILITY_BIT_SIZE;
+
+    static const int MESSAGE_NUMBER_OFFSET = 0;
+    static const int PACKET_POSITION_OFFSET = MESSAGE_NUMBER_OFFSET + MESSAGE_NUMBER_SIZE;
+
+    static const int MESSAGE_PART_NUMBER_OFFSET = 0;
+
+    static const uint32_t CONTROL_BIT_MASK = uint32_t(1) << CONTROL_BIT_OFFSET;
+    static const uint32_t RELIABILITY_BIT_MASK = uint32_t(1) << RELIABILITY_BIT_OFFSET;
+    static const uint32_t MESSAGE_BIT_MASK = uint32_t(1) << MESSAGE_BIT_OFFSET;
+    static const uint32_t OBFUSCATION_LEVEL_MASK = uint32_t(3) << OBFUSCATION_LEVEL_OFFSET;
+    static const uint32_t BIT_FIELD_MASK = CONTROL_BIT_MASK | RELIABILITY_BIT_MASK | MESSAGE_BIT_MASK | OBFUSCATION_LEVEL_MASK;
+    static const uint32_t SEQUENCE_NUMBER_MASK = ~BIT_FIELD_MASK;
+
+    static const uint32_t PACKET_POSITION_MASK = uint32_t(3) << PACKET_POSITION_OFFSET;
+    static const uint32_t MESSAGE_NUMBER_MASK = ~PACKET_POSITION_MASK;
+
+    static const uint32_t MESSAGE_PART_NUMBER_MASK = ~uint32_t(0);
 
     Packet(uint32_t s, PacketType t);
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);

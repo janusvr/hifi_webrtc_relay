@@ -85,19 +85,20 @@ uint qHash(const PacketType& key, uint seed) {
     return qHash((quint8) key, seed);
 }
 
-Packet::Packet(uint32_t s, PacketType t)
+Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
 {
     type = t;
     version = versionForPacketType(t);
 
-    packetSize = MAX_PACKET_SIZE;
+    packetSize = size;
     payloadSize = 0;
     payloadCapacity = packetSize;
     packet.reset(new char[packetSize]());
     payloadStart = packet.get();
+    sequenceNumber = sequence;
 
     // Pack the sequence number
-    memcpy(packet.get(), &s, sizeof(uint32_t));
+    memcpy(packet.get(), &sequenceNumber, sizeof(uint32_t));
 
     // Pack the packet type
     memcpy(packet.get() + sizeof(uint32_t), &type, sizeof(PacketType));
@@ -124,7 +125,7 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
     bool isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
     bool isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
     bool obfuscationLevel = (int)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
-    uint32_t sequenceNumber = (uint32_t)(*seqNumBitField & SEQUENCE_NUMBER_MASK ); // Remove the bit field
+    sequenceNumber = (uint32_t)(*seqNumBitField & SEQUENCE_NUMBER_MASK ); // Remove the bit field
 
     //qDebug() << isReliable << isPartOfMessage << obfuscationLevel << sequenceNumber;
 
@@ -169,9 +170,9 @@ int Packet::localHeaderSize(PacketType type) {
     return sizeof(PacketType) + sizeof(PacketVersion) + optionalSize;
 }
 
-std::unique_ptr<Packet> Packet::create(uint32_t s, PacketType t)
+std::unique_ptr<Packet> Packet::create(uint32_t sequence, PacketType t, qint64 size)
 {
-    auto packet = std::unique_ptr<Packet>(new Packet(s,t));
+    auto packet = std::unique_ptr<Packet>(new Packet(sequence,t,headerSize(false) + localHeaderSize(t) + size));
 
     packet->open(QIODevice::ReadWrite);
 
@@ -240,4 +241,11 @@ qint64 Packet::readData(char* dest, qint64 maxSize) {
     }
 
     return numBytesToRead;
+}
+
+QByteArray Packet::readWithoutCopy(qint64 maxSize) {
+    qint64 sizeToRead = std::min(size() - pos(), maxSize);
+    QByteArray data { QByteArray::fromRawData(payloadStart + pos(), sizeToRead) };
+    seek(pos() + sizeToRead);
+    return data;
 }

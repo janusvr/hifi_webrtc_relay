@@ -360,13 +360,13 @@ public:
 
     static const uint32_t MESSAGE_PART_NUMBER_MASK = ~uint32_t(0);
 
-    Packet(uint32_t s, PacketType t);
+    Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
 
     static int headerSize(bool isPartOfMessage);
     static int localHeaderSize(PacketType type);
 
-    static std::unique_ptr<Packet> create(uint32_t s, PacketType t);
+    static std::unique_ptr<Packet> create(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
     static std::unique_ptr<Packet> fromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
 
     void adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize = false);
@@ -377,10 +377,14 @@ public:
     bool reset();
     qint64 writeData(const char* data, qint64 maxSize);
     qint64 readData(char* dest, qint64 maxSize);
+    QByteArray readWithoutCopy(qint64 maxSize);
 
     char* getData() { return packet.get(); }
     const char* getData() const { return packet.get(); }
     qint64 getDataSize() const { return (payloadStart - packet.get()) + payloadSize; }
+
+    PacketType getType() {return type;}
+    uint32_t getSequenceNumber() {return sequenceNumber;}
 
 private:
     PacketType type;
@@ -390,6 +394,8 @@ private:
     qint64 payloadSize;
     char * payloadStart;
     qint64 payloadCapacity;
+
+    uint32_t sequenceNumber;
 
     std::unique_ptr<char[]> packet;
 };

@@ -11,6 +11,7 @@
 #include <QUuid>
 
 #include "packet.h"
+#include "utils.h"
 
 const uint32_t RFC_5389_MAGIC_COOKIE = 0x2112A442;
 const int NUM_BYTES_STUN_HEADER = 20;
@@ -18,6 +19,36 @@ const int NUM_BYTES_STUN_HEADER = 20;
 const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
 const int HIFI_INITIAL_UPDATE_INTERVAL_MSEC = 250;
 const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
+const int NUM_BYTES_RFC4122_UUID = 16;
+
+typedef quint8 NodeType_t;
+
+namespace NodeType {
+    const NodeType_t DomainServer = 'D';
+    const NodeType_t EntityServer = 'o'; // was ModelServer
+    const NodeType_t Agent = 'I';
+    const NodeType_t AudioMixer = 'M';
+    const NodeType_t AvatarMixer = 'W';
+    const NodeType_t AssetServer = 'A';
+    const NodeType_t MessagesMixer = 'm';
+    const NodeType_t EntityScriptServer = 'S';
+    const NodeType_t UpstreamAudioMixer = 'B';
+    const NodeType_t UpstreamAvatarMixer = 'C';
+    const NodeType_t DownstreamAudioMixer = 'a';
+    const NodeType_t DownstreamAvatarMixer = 'w';
+    const NodeType_t Unassigned = 1;
+
+    const QString& getNodeTypeName(NodeType_t nodeType);
+    bool isUpstream(NodeType_t nodeType);
+    bool isDownstream(NodeType_t nodeType);
+    NodeType_t upstreamType(NodeType_t primaryType);
+    NodeType_t downstreamType(NodeType_t primaryType);
+
+
+    NodeType_t fromString(QString type);
+}
+
+typedef QSet<NodeType_t> NodeSet;
 
 class Task : public QObject
 {
@@ -30,6 +61,7 @@ public:
     void handleLookupResult(const QHostInfo& hostInfo, QHostAddress * addr);
 
     void makeStunRequestPacket(char * stunRequestPacket);
+    void sendIcePingReply(Packet * icePing);
 
 public slots:
 
@@ -38,13 +70,15 @@ public slots:
     void startIce();
     void startStun();
     void startDomainConnect();
+    void startDomainList();
 
     void sendStunRequest();
     void parseStunResponse();
     void sendIceRequest();
     void parseIceResponse();
     void sendDomainConnectRequest();
-    void parseDomainConnectResponse();
+    void sendDomainListRequest();
+    void parseDomainResponse();
 
     void domainRequestFinished();
 
@@ -52,6 +86,7 @@ signals:
 
     void stunFinished();
     void iceFinished();
+    void domainConnected();
     void finished();
 
 private:
@@ -89,9 +124,11 @@ private:
     QUuid ice_client_id;
 
     bool has_completed_current_request;
-    int num_requests;
+    bool domain_connected;
+    uint32_t num_requests;
 
     QString domain_name;
+    QString domain_place_name;
     QUuid domain_id;
     QHostAddress domain_public_address;
     quint16 domain_public_port;
@@ -103,5 +140,10 @@ private:
     QNetworkReply * domain_reply;
     QByteArray domain_reply_contents;
     bool finished_domain_id_request;
+
+    std::atomic<NodeType_t> owner_type;
+    NodeSet node_types_of_interest;
+
+    uint32_t sequence_number;
 };
 #endif // TASK_H

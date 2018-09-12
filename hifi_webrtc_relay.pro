@@ -17,8 +17,12 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += main.cpp \
     task.cpp \
-    packet.cpp
+    packet.cpp \
+    utils.cpp
 
 HEADERS += \
     task.h \
-    packet.h
+    packet.h \
+    utils.h
+
+unix:macx:LIBS += -framework IOKit -framework CoreFoundation

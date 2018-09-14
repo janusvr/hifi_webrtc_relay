@@ -13,6 +13,7 @@ Task::Task(QObject * parent) :
 {
     use_custom_ice_server = false;
     finished_domain_id_request = false;
+    started_domain_connect = false;
     ice_client_id = QUuid::createUuid();
 
     owner_type = NodeType::Agent;
@@ -90,8 +91,8 @@ void Task::run()
     connect(signal_mapper, SIGNAL(mapped(QString)), this, SLOT(readPendingDatagrams(QString)));
 
     connect(this, SIGNAL(stunFinished()), this, SLOT(startIce()));
-    connect(this, SIGNAL(iceFinished()), this, SLOT(startDomainConnect()));
-    connect(this, SIGNAL(domainConnected()), this, SLOT(startDomainList()));
+    connect(this, SIGNAL(iceFinished()), this, SLOT(startDomainIcePing()));
+    connect(this, SIGNAL(domainPinged()), this, SLOT(startDomainConnect()));
 
     startStun();
 
@@ -174,7 +175,7 @@ void Task::startIce()
     hifi_response_timer->start();
 }
 
-void Task::startDomainConnect()
+void Task::startDomainIcePing()
 {
     disconnect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseIceResponse()));
     connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(parseDomainResponse()));
@@ -183,24 +184,24 @@ void Task::startDomainConnect()
     has_completed_current_request = false;
 
     disconnect(hifi_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
-    hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendDomainConnectRequest);
-    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+    hifi_ping_timer = new QTimer { this };
+    connect(hifi_ping_timer, &QTimer::timeout, this, &Task::sendDomainIcePing);
+    hifi_ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
-    hifi_socket->bind(local_address, local_port);
     hifi_socket->connectToHost(domain_public_address, domain_public_port, QIODevice::ReadWrite);
     hifi_socket->waitForConnected();
 
-    hifi_response_timer->start();
+    hifi_ping_timer->start();
 }
 
-void Task::startDomainList()
+void Task::startDomainConnect()
 {
+    started_domain_connect = true;
+    num_requests = 0;
     has_completed_current_request = false;
 
-    disconnect(hifi_response_timer, &QTimer::timeout, this, &Task::sendDomainConnectRequest);
     hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendDomainListRequest);
+    connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendDomainConnectRequest);
     hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     hifi_response_timer->start();
@@ -368,16 +369,23 @@ void Task::parseDomainResponse()
         //qDebug() << "Task::parseDomainResponse() - read packet from " << sender << ":" << senderPort << " of size " << datagram.size() << " bytes";
 
         std::unique_ptr<Packet> domainResponsePacket = Packet::fromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, senderPort);
-        qDebug() << "Task::parseDomainResponse() - Packet type" << (int) domainResponsePacket->getType();
-        sequence_number = domainResponsePacket->getSequenceNumber() + 1;
+        //qDebug() << "Task::parseDomainResponse() - Packet type" << (int) domainResponsePacket->getType();
+        sequence_number = domainResponsePacket->getSequenceNumber();
         if (domainResponsePacket->getType() == PacketType::ICEPing) {
-            qDebug() << "Task::parseDomainResponse() - Send ping reply";
+            //qDebug() << "Task::parseDomainResponse() - Send ping reply";
             sendIcePingReply(domainResponsePacket.get());
-            domain_connected = true;
-            //emit domainConnected();
+        }
+        else if (domainResponsePacket->getType() == PacketType::ICEPingReply) {
+            //qDebug() << "Task::parseDomainResponse() - Process ping reply";
+            if (!started_domain_connect) emit domainPinged();
         }
         else if (domainResponsePacket->getType() == PacketType::DomainList) {
             qDebug() << "TODO: parse domain list and connect";
+
+            // if this was the first domain-server list from this domain, we've now connected
+            if (!domain_connected) {
+                domain_connected = true;
+            }
         }
         else if (domainResponsePacket->getType() == PacketType::DomainConnectionDenied) {
             uint8_t reasonCode;
@@ -459,17 +467,34 @@ void Task::sendIceRequest()
         return;
     }
 
-    uint32_t sequence_number = 0;
     PacketType packetType = PacketType::ICEServerQuery;
     //PacketVersion version = versionForPacketType(packetType);
     std::unique_ptr<Packet> iceRequestPacket = Packet::create(sequence_number,packetType);
     QDataStream iceDataStream(iceRequestPacket.get());
     iceDataStream << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
-
-    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)version << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
-
+    //qDebug () << "Task::sendIceRequest() - ICE address:" << hifi_socket->peerAddress() << "ICE port:" << hifi_socket->peerPort();
+    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)versionForPacketType(packetType) << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
     hifi_socket->write(iceRequestPacket->getData(), iceRequestPacket->getDataSize());
+
     //hifi_socket->writeDatagram(iceRequestPacket, packetSize, hifi_socket->peerAddress(), hifi_socket->peerPort());
+}
+
+void Task::sendDomainIcePing()
+{
+    if (!finished_domain_id_request) {
+        return;
+    }
+
+    if (domain_connected) {
+        qDebug() << "Task::sendDomainIcePing() - Stopping ICE server pings";
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
+        return;
+    }
+
+    // send the ping packet to the local and public sockets for this node
+    //sendIcePing((quint8) 1);
+    sendIcePing((quint8) 2);
 }
 
 void Task::sendDomainConnectRequest()
@@ -493,45 +518,37 @@ void Task::sendDomainConnectRequest()
     //PacketVersion version = versionForPacketType(packetType);
     std::unique_ptr<Packet> domainConnectRequestPacket = Packet::create(sequence_number,packetType);
     QDataStream domainConnectDataStream(domainConnectRequestPacket.get());
-    //qDebug() << ice_client_id << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
-    //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domainConnectDataStream << ice_client_id;
 
-    QByteArray protocolVersionSig = Utils::GetProtocolVersionSignature();
+    //QByteArray protocolVersionSig = Utils::GetProtocolVersionSignature();
+    //domainConnectDataStream.writeBytes(protocolVersionSig.constData(), protocolVersionSig.size());
+
+    //TODO: fix hardcode protocol version
+    QByteArray protocolVersionSig;
+    protocolVersionSig.push_back(0xc8);
+    protocolVersionSig.push_back(0x4d);
+    protocolVersionSig.push_back(0x93);
+    protocolVersionSig.push_back(0x15);
+    protocolVersionSig.push_back(0x28);
+    protocolVersionSig.push_back(0xdd);
+    protocolVersionSig.push_back(0x6d);
+    protocolVersionSig.push_back(0xa2);
+    protocolVersionSig.push_back(0xd4);
+    protocolVersionSig.push_back(0x72);
+    protocolVersionSig.push_back(0x64);
+    protocolVersionSig.push_back(0xcd);
+    protocolVersionSig.push_back(0x50);
+    protocolVersionSig.push_back(0xf1);
+    protocolVersionSig.push_back(0xbb);
+    protocolVersionSig.push_back(0xa8);
     domainConnectDataStream.writeBytes(protocolVersionSig.constData(), protocolVersionSig.size());
 
-    //qDebug() << protocolVersionSig;
-
+    //qDebug() << ice_client_id << protocolVersionSig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
+    //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domainConnectDataStream << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint()
-                            << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
+                            << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
+
     hifi_socket->write(domainConnectRequestPacket->getData(), domainConnectRequestPacket->getDataSize());
-}
-
-void Task::sendDomainListRequest()
-{
-    if (!finished_domain_id_request) {
-        return;
-    }
-
-    if (!has_completed_current_request) {
-        qDebug() << "Task::sendDomainListRequest() - Sending initial domain list request to" << domain_public_address << domain_public_port;
-        ++num_requests;
-    }
-    else {
-        //qDebug() << "Task::sendDomainListRequest() - Completed domain list request";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
-        return;
-    }
-
-    uint32_t sequence_number = num_requests - 1;
-    PacketType packetType = PacketType::DomainListRequest;
-    //PacketVersion version = versionForPacketType(packetType);
-    std::unique_ptr<Packet> domainListRequestPacket = Packet::create(sequence_number,packetType);
-    QDataStream domainListDataStream(domainListRequestPacket.get());
-    qDebug() << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
-    domainListDataStream << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
-    hifi_socket->write(domainListRequestPacket->getData(), domainListRequestPacket->getDataSize());
 }
 
 void Task::makeStunRequestPacket(char * stunRequestPacket)
@@ -557,6 +574,17 @@ void Task::makeStunRequestPacket(char * stunRequestPacket)
     const uint NUM_TRANSACTION_ID_BYTES = 12;
     QUuid randomUUID = QUuid::createUuid();
     memcpy(stunRequestPacket + packetIndex, randomUUID.toRfc4122().data(), NUM_TRANSACTION_ID_BYTES);
+}
+
+void Task::sendIcePing(quint8 pingType)
+{
+    int packetSize = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
+
+    auto icePingPacket = Packet::create(sequence_number, PacketType::ICEPing, packetSize);
+    icePingPacket->write(ice_client_id.toRfc4122());
+    icePingPacket->write(reinterpret_cast<const char*>(&pingType), sizeof(pingType));
+
+    hifi_socket->write(icePingPacket->getData(), icePingPacket->getDataSize());
 }
 
 void Task::sendIcePingReply(Packet * icePing)

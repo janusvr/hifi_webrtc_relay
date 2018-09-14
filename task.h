@@ -18,6 +18,7 @@ const int NUM_BYTES_STUN_HEADER = 20;
 
 const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
 const int HIFI_INITIAL_UPDATE_INTERVAL_MSEC = 250;
+const int HIFI_PING_UPDATE_INTERVAL_MSEC = 1000;
 const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
 const int NUM_BYTES_RFC4122_UUID = 16;
 
@@ -50,6 +51,21 @@ namespace NodeType {
 
 typedef QSet<NodeType_t> NodeSet;
 
+enum class Permission {
+    none = 0,
+    canConnectToDomain = 1,
+    canAdjustLocks = 2,
+    canRezPermanentEntities = 4,
+    canRezTemporaryEntities = 8,
+    canWriteToAssetServer = 16,
+    canConnectPastMaxCapacity = 32,
+    canKick = 64,
+    canReplaceDomainContent = 128,
+    canRezPermanentCertifiedEntities = 256,
+    canRezTemporaryCertifiedEntities = 512
+};
+Q_DECLARE_FLAGS(Permissions, Permission)
+
 class Task : public QObject
 {
     Q_OBJECT
@@ -61,6 +77,7 @@ public:
     void handleLookupResult(const QHostInfo& hostInfo, QHostAddress * addr);
 
     void makeStunRequestPacket(char * stunRequestPacket);
+    void sendIcePing(quint8 pingType);
     void sendIcePingReply(Packet * icePing);
 
 public slots:
@@ -69,15 +86,15 @@ public slots:
     void readPendingDatagrams(QString f);
     void startIce();
     void startStun();
+    void startDomainIcePing();
     void startDomainConnect();
-    void startDomainList();
 
     void sendStunRequest();
     void parseStunResponse();
     void sendIceRequest();
     void parseIceResponse();
+    void sendDomainIcePing();
     void sendDomainConnectRequest();
-    void sendDomainListRequest();
     void parseDomainResponse();
 
     void domainRequestFinished();
@@ -86,6 +103,7 @@ signals:
 
     void stunFinished();
     void iceFinished();
+    void domainPinged();
     void domainConnected();
     void finished();
 
@@ -107,6 +125,7 @@ private:
     quint16 server_port;
 
     QUdpSocket * hifi_socket;
+    QTimer * hifi_ping_timer;
     QTimer * hifi_response_timer;
 
     QHostAddress public_address;
@@ -144,6 +163,12 @@ private:
     std::atomic<NodeType_t> owner_type;
     NodeSet node_types_of_interest;
 
+    bool started_domain_connect;
     uint32_t sequence_number;
+
+    QUuid session_id;
+    quint16 local_id;
+
+    Permissions permissions;
 };
 #endif // TASK_H

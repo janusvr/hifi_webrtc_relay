@@ -90,12 +90,13 @@ Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
     type = t;
     version = versionForPacketType(t);
 
-    packetSize = size;
+    packetSize = (size == -1) ? MAX_PACKET_SIZE: size;
     payloadSize = 0;
     payloadCapacity = packetSize;
     packet.reset(new char[packetSize]());
     payloadStart = packet.get();
     sequenceNumber = sequence;
+    isPartOfMessage = false;
 
     // Pack the sequence number
     memcpy(packet.get(), &sequenceNumber, sizeof(uint32_t));
@@ -122,9 +123,9 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
 
     uint32_t* seqNumBitField = reinterpret_cast<uint32_t*>(packet.get());
 
-    bool isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
-    bool isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
-    bool obfuscationLevel = (int)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
+    isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
+    isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
+    obfuscationLevel = (int)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
     sequenceNumber = (uint32_t)(*seqNumBitField & SEQUENCE_NUMBER_MASK ); // Remove the bit field
 
     //qDebug() << isReliable << isPartOfMessage << obfuscationLevel << sequenceNumber;
@@ -132,19 +133,19 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
     if (isPartOfMessage) {
         uint32_t* messageNumberAndBitField = seqNumBitField + 1;
 
-        uint32_t messageNumber = *messageNumberAndBitField & MESSAGE_NUMBER_MASK;
-        short packetPosition = static_cast<short>(*messageNumberAndBitField >> PACKET_POSITION_OFFSET);
+        messageNumber = *messageNumberAndBitField & MESSAGE_NUMBER_MASK;
+        packetPosition = static_cast<short>(*messageNumberAndBitField >> PACKET_POSITION_OFFSET);
 
-        uint32_t* messagePartNumber = messageNumberAndBitField + 1;
+        messagePartNumber = messageNumberAndBitField + 1;
 
         //qDebug() << messageNumber << (int) packetPosition << messagePartNumber;
     }
 
     adjustPayloadStartAndCapacity(Packet::headerSize(isPartOfMessage), payloadSize > 0);
 
-    /*if (getObfuscationLevel() != Packet::NoObfuscation) {
-        obfuscate(NoObfuscation); // Undo obfuscation
-    }*/
+    if (obfuscationLevel != Packet::NoObfuscation) {
+        obfuscate(Packet::NoObfuscation); // Undo obfuscation
+    }
 
     auto headerOffset = Packet::headerSize(isPartOfMessage);
     type = *reinterpret_cast<const PacketType*>(packet.get() + headerOffset);
@@ -170,9 +171,13 @@ int Packet::localHeaderSize(PacketType type) {
     return sizeof(PacketType) + sizeof(PacketVersion) + optionalSize;
 }
 
+int Packet::totalHeaderSize() {
+    return headerSize(isPartOfMessage) + localHeaderSize(type);
+}
+
 std::unique_ptr<Packet> Packet::create(uint32_t sequence, PacketType t, qint64 size)
 {
-    auto packet = std::unique_ptr<Packet>(new Packet(sequence,t,headerSize(false) + localHeaderSize(t) + size));
+    auto packet = std::unique_ptr<Packet>(new Packet(sequence,t,(size == -1) ? -1 : (headerSize(false) + localHeaderSize(t) + size)));
 
     packet->open(QIODevice::ReadWrite);
 
@@ -248,4 +253,48 @@ QByteArray Packet::readWithoutCopy(qint64 maxSize) {
     QByteArray data { QByteArray::fromRawData(payloadStart + pos(), sizeToRead) };
     seek(pos() + sizeToRead);
     return data;
+}
+
+void xorHelper(char* start, int size, uint64_t key) {
+    auto current = start;
+    auto xorValue = reinterpret_cast<const char*>(&key);
+    for (int i = 0; i < size; ++i) {
+        *(current++) ^= *(xorValue + (i % sizeof(uint64_t)));
+    }
+}
+
+void Packet::obfuscate(ObfuscationLevel level) {
+    QList<uint64_t> KEYS = QList<uint64_t>() << 0x0 << 0x6362726973736574 << 0x7362697261726461 << 0x72687566666d616e;
+    auto obfuscationKey = KEYS[obfuscationLevel] ^ KEYS[level]; // Undo old and apply new one.
+    if (obfuscationKey != 0) {
+        xorHelper(getData() + headerSize(isPartOfMessage),
+                  getDataSize() - headerSize(isPartOfMessage), obfuscationKey);
+
+        // Update members and header
+        obfuscationLevel = level;
+
+        uint32_t* seqNumBitField = reinterpret_cast<uint32_t*>(packet.get());
+
+        // Write sequence number and reset bit field
+        *seqNumBitField = (sequenceNumber);
+
+        if (isReliable) {
+            *seqNumBitField |= RELIABILITY_BIT_MASK;
+        }
+
+        if (obfuscationLevel != NoObfuscation) {
+            *seqNumBitField |= (obfuscationLevel << OBFUSCATION_LEVEL_OFFSET);
+        }
+
+        if (isPartOfMessage) {
+            *seqNumBitField |= MESSAGE_BIT_MASK;
+
+            uint32_t* messageNumberAndBitField = seqNumBitField + 1;
+            *messageNumberAndBitField = messageNumber;
+            *messageNumberAndBitField |= packetPosition << PACKET_POSITION_OFFSET;
+
+            uint32_t* messagePartNumber = messageNumberAndBitField + 1;
+            *this->messagePartNumber = *messagePartNumber;
+        }
+    }
 }

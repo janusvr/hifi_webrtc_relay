@@ -320,54 +320,65 @@ enum class AvatarQueryVersion : PacketVersion {
     ConicalFrustums = 22
 };
 
+const int UDP_IPV4_HEADER_SIZE = 28;
+const int MAX_PACKET_SIZE_WITH_UDP_HEADER = 1492;
+const int MAX_PACKET_SIZE = MAX_PACKET_SIZE_WITH_UDP_HEADER - UDP_IPV4_HEADER_SIZE;
+const int CONTROL_BIT_SIZE = 1;
+const int RELIABILITY_BIT_SIZE = 1;
+const int MESSAGE_BIT_SIZE = 1;
+const int OBFUSCATION_LEVEL_SIZE = 2;
+const int SEQUENCE_NUMBER_SIZE= 27;
+
+const int PACKET_POSITION_SIZE = 2;
+const int MESSAGE_NUMBER_SIZE = 30;
+
+const int MESSAGE_PART_NUMBER_SIZE = 32;
+
+const int SEQUENCE_NUMBER_OFFSET = 0;
+const int OBFUSCATION_LEVEL_OFFSET = SEQUENCE_NUMBER_OFFSET + SEQUENCE_NUMBER_SIZE;
+const int MESSAGE_BIT_OFFSET = OBFUSCATION_LEVEL_OFFSET + OBFUSCATION_LEVEL_SIZE;
+const int RELIABILITY_BIT_OFFSET = MESSAGE_BIT_OFFSET + MESSAGE_BIT_SIZE;
+const int CONTROL_BIT_OFFSET = RELIABILITY_BIT_OFFSET + RELIABILITY_BIT_SIZE;
+
+const int MESSAGE_NUMBER_OFFSET = 0;
+const int PACKET_POSITION_OFFSET = MESSAGE_NUMBER_OFFSET + MESSAGE_NUMBER_SIZE;
+
+const int MESSAGE_PART_NUMBER_OFFSET = 0;
+
+const uint32_t CONTROL_BIT_MASK = uint32_t(1) << CONTROL_BIT_OFFSET;
+const uint32_t RELIABILITY_BIT_MASK = uint32_t(1) << RELIABILITY_BIT_OFFSET;
+const uint32_t MESSAGE_BIT_MASK = uint32_t(1) << MESSAGE_BIT_OFFSET;
+const uint32_t OBFUSCATION_LEVEL_MASK = uint32_t(3) << OBFUSCATION_LEVEL_OFFSET;
+const uint32_t BIT_FIELD_MASK = CONTROL_BIT_MASK | RELIABILITY_BIT_MASK | MESSAGE_BIT_MASK | OBFUSCATION_LEVEL_MASK;
+const uint32_t SEQUENCE_NUMBER_MASK = ~BIT_FIELD_MASK;
+
+const uint32_t PACKET_POSITION_MASK = uint32_t(3) << PACKET_POSITION_OFFSET;
+const uint32_t MESSAGE_NUMBER_MASK = ~PACKET_POSITION_MASK;
+
+static const uint32_t MESSAGE_PART_NUMBER_MASK = ~uint32_t(0);
+
 class Packet : public QIODevice
 {
 public:
-    static const int UDP_IPV4_HEADER_SIZE = 28;
-    static const int MAX_PACKET_SIZE_WITH_UDP_HEADER = 1492;
-    static const int MAX_PACKET_SIZE = MAX_PACKET_SIZE_WITH_UDP_HEADER - UDP_IPV4_HEADER_SIZE;
-    static const int CONTROL_BIT_SIZE = 1;
-    static const int RELIABILITY_BIT_SIZE = 1;
-    static const int MESSAGE_BIT_SIZE = 1;
-    static const int OBFUSCATION_LEVEL_SIZE = 2;
-    static const int SEQUENCE_NUMBER_SIZE= 27;
-
-    static const int PACKET_POSITION_SIZE = 2;
-    static const int MESSAGE_NUMBER_SIZE = 30;
-
-    static const int MESSAGE_PART_NUMBER_SIZE = 32;
-
-    static const int SEQUENCE_NUMBER_OFFSET = 0;
-    static const int OBFUSCATION_LEVEL_OFFSET = SEQUENCE_NUMBER_OFFSET + SEQUENCE_NUMBER_SIZE;
-    static const int MESSAGE_BIT_OFFSET = OBFUSCATION_LEVEL_OFFSET + OBFUSCATION_LEVEL_SIZE;
-    static const int RELIABILITY_BIT_OFFSET = MESSAGE_BIT_OFFSET + MESSAGE_BIT_SIZE;
-    static const int CONTROL_BIT_OFFSET = RELIABILITY_BIT_OFFSET + RELIABILITY_BIT_SIZE;
-
-    static const int MESSAGE_NUMBER_OFFSET = 0;
-    static const int PACKET_POSITION_OFFSET = MESSAGE_NUMBER_OFFSET + MESSAGE_NUMBER_SIZE;
-
-    static const int MESSAGE_PART_NUMBER_OFFSET = 0;
-
-    static const uint32_t CONTROL_BIT_MASK = uint32_t(1) << CONTROL_BIT_OFFSET;
-    static const uint32_t RELIABILITY_BIT_MASK = uint32_t(1) << RELIABILITY_BIT_OFFSET;
-    static const uint32_t MESSAGE_BIT_MASK = uint32_t(1) << MESSAGE_BIT_OFFSET;
-    static const uint32_t OBFUSCATION_LEVEL_MASK = uint32_t(3) << OBFUSCATION_LEVEL_OFFSET;
-    static const uint32_t BIT_FIELD_MASK = CONTROL_BIT_MASK | RELIABILITY_BIT_MASK | MESSAGE_BIT_MASK | OBFUSCATION_LEVEL_MASK;
-    static const uint32_t SEQUENCE_NUMBER_MASK = ~BIT_FIELD_MASK;
-
-    static const uint32_t PACKET_POSITION_MASK = uint32_t(3) << PACKET_POSITION_OFFSET;
-    static const uint32_t MESSAGE_NUMBER_MASK = ~PACKET_POSITION_MASK;
-
-    static const uint32_t MESSAGE_PART_NUMBER_MASK = ~uint32_t(0);
+    // Use same size as SequenceNumberAndBitField so we can use the enum with bitwise operations
+    enum ObfuscationLevel : uint32_t {
+        NoObfuscation = 0x0, // 00
+        ObfuscationL1 = 0x1, // 01
+        ObfuscationL2 = 0x2, // 10
+        ObfuscationL3 = 0x3, // 11
+    };
 
     Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
 
     static int headerSize(bool isPartOfMessage);
     static int localHeaderSize(PacketType type);
+    int totalHeaderSize();
 
-    static std::unique_ptr<Packet> create(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
+    static std::unique_ptr<Packet> create(uint32_t sequence, PacketType t, qint64 size = -1);
     static std::unique_ptr<Packet> fromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
+
+    void obfuscate(ObfuscationLevel level);
 
     void adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize = false);
 
@@ -395,6 +406,12 @@ private:
     char * payloadStart;
     qint64 payloadCapacity;
 
+    uint32_t obfuscationLevel;
+    bool isPartOfMessage;
+    bool isReliable;
+    uint32_t messageNumber;
+    short packetPosition;
+    uint32_t * messagePartNumber;
     uint32_t sequenceNumber;
 
     std::unique_ptr<char[]> packet;

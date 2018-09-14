@@ -70,7 +70,7 @@ QUuid Utils::GetMachineFingerprint()
         }
 
         machineFingerprint = uuid;
-        qDebug() << "Utils::GetMachineFingerprint - " << machineFingerprint;
+        //qDebug() << "Utils::GetMachineFingerprint - " << machineFingerprint;
     }
 
     return machineFingerprint;

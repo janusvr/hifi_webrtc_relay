@@ -75,9 +75,13 @@ public:
 
     void activatePublicSocket(QHostAddress l, quint16 p);
 
+    void startPing();
+    void startNegotiateAudioFormat();
+
     QUdpSocket * getSocket();
 
 public slots:
+    void sendNegotiateAudioFormat();
     void sendPing();
     void relayToClient();
 
@@ -103,6 +107,11 @@ private:
     static QUdpSocket * client_socket;
 
     QTimer * ping_timer;
+    QTimer * hifi_response_timer;
+
+    bool started_negotiating_audio_format;
+    bool negotiated_audio_format;
+    int num_requests;
 };
 
 #endif // NODE_H

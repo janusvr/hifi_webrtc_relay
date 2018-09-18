@@ -395,6 +395,9 @@ public:
     qint64 readData(char* dest, qint64 maxSize);
     QByteArray readWithoutCopy(qint64 maxSize);
 
+    qint64 writeString(const QString& string);
+    QString readString();
+
     char* getData() { return packet.get(); }
     const char* getData() const { return packet.get(); }
     qint64 getDataSize() const { return (payloadStart - packet.get()) + payloadSize; }

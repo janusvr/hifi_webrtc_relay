@@ -75,7 +75,7 @@ PacketVersion versionForPacketType(PacketType packetType) {
         case PacketType::EntityQueryInitialResultsComplete:
             return static_cast<PacketVersion>(EntityVersion::ParticleSpin);
         default:
-            return 22;
+            return 21;
     }
 }
 
@@ -336,4 +336,22 @@ void Packet::writeVerificationHash(HMACAuth * hmacAuth)
     //qDebug() << "verification hash" << verificationHash << verificationHash.size();
 
     memcpy(packet.get() + offset, verificationHash.data(), verificationHash.size());
+}
+
+qint64 Packet::writeString(const QString& string)
+{
+    QByteArray data = string.toUtf8();
+    uint32_t length = data.length();
+    write(reinterpret_cast<const char*>(&length), sizeof(length));
+    write(data.constData(), data.length());
+    return length + sizeof(uint32_t);
+}
+
+QString Packet::readString()
+{
+    uint32_t size;
+    read(reinterpret_cast<char*>(&size), sizeof(uint32_t));
+    auto string = QString::fromUtf8(payloadStart + pos(), size);
+    seek(pos() + size);
+    return string;
 }

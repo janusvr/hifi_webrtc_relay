@@ -6,6 +6,9 @@ Node::Node()
 {
     connected = false;
     authenticate_hash = nullptr;
+    num_requests = 0;
+    started_negotiating_audio_format = false;
+    negotiated_audio_format = false;
 }
 
 Node::~Node()
@@ -83,11 +86,28 @@ void Node::activatePublicSocket(QHostAddress l, quint16 p)
 
     connect(node_socket, SIGNAL(readyRead()), this, SLOT(relayToClient()));
 
+    startPing();
+}
+
+void Node::startPing()
+{
     // start the ping timer for this node
     ping_timer = new QTimer { this };
     connect(ping_timer, &QTimer::timeout, this, &Node::sendPing);
     ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
     ping_timer->start();
+}
+
+void Node::startNegotiateAudioFormat()
+{
+    // start the ping timer for this node
+    started_negotiating_audio_format = true;
+    num_requests = 0;
+
+    hifi_response_timer = new QTimer { this };
+    connect(hifi_response_timer, &QTimer::timeout, this, &Node::sendNegotiateAudioFormat);
+    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+    hifi_response_timer->start();
 }
 
 void Node::sendPing()
@@ -118,6 +138,39 @@ void Node::sendPing()
 
     //qDebug() << "Node::sendPing() - Pinging to node: " << (char) node_type << pingType << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << pingPacket->getDataSize();
     node_socket->write(pingPacket->getData(), pingPacket->getDataSize());
+}
+
+void Node::sendNegotiateAudioFormat()
+{
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
+    {
+        qDebug() << "Node::sendNegotiateAudioFormat() - Stopping negotiations of audio format";
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
+        return;
+    }
+
+    if (!negotiated_audio_format) {
+        qDebug() << "Node::sendNegotiateAudioFormat() - Negotiating";
+        ++num_requests;
+    }
+    else {
+        qDebug() << "Node::sendNegotiateAudioFormat() - Completed negotiations";
+        hifi_response_timer->stop();
+        hifi_response_timer->deleteLater();
+        return;
+    }
+
+    auto negotiateFormatPacket = Packet::create(0,PacketType::NegotiateAudioFormat);
+    quint8 numberOfCodecs = 2; //2 - pcm and zlib
+    negotiateFormatPacket->write(reinterpret_cast<const char*>(&numberOfCodecs), sizeof(numberOfCodecs));
+    negotiateFormatPacket->writeString(QString("pcm"));
+    negotiateFormatPacket->writeString(QString("zlib"));
+
+    negotiateFormatPacket->writeSourceID(domain_session_local_id);
+    negotiateFormatPacket->writeVerificationHash(authenticate_hash.get());
+
+    node_socket->write(negotiateFormatPacket->getData(), negotiateFormatPacket->getDataSize());
 }
 
 QUdpSocket * Node::getSocket()
@@ -157,13 +210,23 @@ void Node::relayToClient()
             replyPacket->writeSourceID(domain_session_local_id);
             replyPacket->writeVerificationHash(authenticate_hash.get());
 
-            qDebug() << "Node::relayToClient() - Ping reply to node: " << (char) node_type << responsePacket->getSequenceNumber() << typeFromOriginalPing << timeFromOriginalPing << timeNow << sender << senderPort;
+            //qDebug() << "Node::relayToClient() - Ping reply to node: " << (char) node_type << responsePacket->getSequenceNumber() << typeFromOriginalPing << timeFromOriginalPing << timeNow << sender << senderPort;
             node_socket->write(replyPacket->getData(), replyPacket->getDataSize());
         }
-        else {
+        else if (responsePacket->getType() == PacketType::SelectedAudioFormat) {
+            negotiated_audio_format = true;
+            qDebug() << "Node::relayToClient() - Negotiated audio format" << responsePacket->readString();
+        }
+        else if (responsePacket->getType() == PacketType::PingReply) {
             connected = true;
+            //qDebug() << "Node::relayToClient() - " << (char) node_type << (int) responsePacket->getType() << sender << senderPort;
 
-            //qDebug() << "Node::relayToClient() - Relay to client";
+            if (!negotiated_audio_format && !started_negotiating_audio_format && node_type == NodeType::AudioMixer) {
+                startNegotiateAudioFormat();
+            }
+        }
+        else if (connected){
+            qDebug() << "Node::relayToClient() - Relay to client";
             client_socket->write(datagram.data(),datagram.size());
         }
     }

@@ -83,9 +83,6 @@ void Task::run()
     connect(client_socket, SIGNAL(readyRead()), this, SLOT (relayToServer()));
     Node::setClientSocket(client_socket);
 
-    connect(this, SIGNAL(stunFinished()), this, SLOT(startIce()));
-    connect(this, SIGNAL(iceFinished()), this, SLOT(startDomainIcePing()));
-    connect(this, SIGNAL(domainPinged()), this, SLOT(startDomainConnect()));
 
     startStun();
 
@@ -290,7 +287,7 @@ void Task::parseStunResponse()
 
                     has_completed_current_request = true;
 
-                    emit stunFinished();
+                    startIce();
 
                     return;
                 }
@@ -336,7 +333,7 @@ void Task::parseIceResponse()
         hifi_socket->waitForDisconnected();
 
         has_completed_current_request = true;
-        emit iceFinished();
+        startDomainIcePing();
     }
 }
 
@@ -361,7 +358,7 @@ void Task::parseDomainResponse()
         }
         else if (domainResponsePacket->getType() == PacketType::ICEPingReply) {
             //qDebug() << "Task::parseDomainResponse() - Process ping reply";
-            if (!started_domain_connect) emit domainPinged();
+            if (!started_domain_connect) startDomainConnect();
         }
         else if (domainResponsePacket->getType() == PacketType::DomainList) {
             qDebug() << "Task::parseDomainResponse() - Process domain list";
@@ -680,7 +677,7 @@ void Task::sendIcePing(quint8 pingType)
 {
     int packetSize = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
 
-    auto icePingPacket = Packet::create(sequence_number, PacketType::ICEPing, packetSize);
+    auto icePingPacket = Packet::create(0, PacketType::ICEPing, packetSize);
     icePingPacket->write(ice_client_id.toRfc4122());
     icePingPacket->write(reinterpret_cast<const char*>(&pingType), sizeof(pingType));
 

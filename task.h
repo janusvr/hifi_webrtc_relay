@@ -52,10 +52,6 @@ public slots:
 
 signals:
 
-    void stunFinished();
-    void iceFinished();
-    void domainPinged();
-    void domainConnected();
     void finished();
 
 private:

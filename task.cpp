@@ -4,8 +4,6 @@ Task::Task(QObject * parent) :
     QObject(parent),
     client_address(QHostAddress::LocalHost),
     client_port(4444),
-    server_address(QHostAddress::LocalHost),
-    server_port(5555),
     stun_server_hostname("stun.highfidelity.io"),
     stun_server_port(3478),
     ice_server_hostname("ice.highfidelity.com"), //"dev-ice.highfidelity.com";
@@ -20,21 +18,24 @@ Task::Task(QObject * parent) :
     node_types_of_interest = NodeSet() << NodeType::AudioMixer << NodeType::AvatarMixer << NodeType::EntityServer << NodeType::AssetServer << NodeType::MessagesMixer << NodeType::EntityScriptServer;
 
     domain_connected = false;
+    Utils::SetupTimestamp();
     Utils::SetupProtocolVersionSignatures();
 
     sequence_number = 0;
+
+    asset_server = nullptr;
+    audio_mixer = nullptr;
+    avatar_mixer = nullptr;
+    messages_mixer = nullptr;
+    entity_server = nullptr;
+    entity_script_server = nullptr;
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])
 {
     for (int i=1; i<argc; ++i) {
         const QString s = QString(argv[i]).toLower();
-        if (s.right(7) == "-server" && i+2 < argc) {
-            server_address = QHostAddress(QString(argv[i+1]));
-            server_port = QString(argv[i+2]).toInt();
-            i+=2;
-        }
-        else if (s.right(7) == "-client" && i+2 < argc) {
+        if (s.right(7) == "-client" && i+2 < argc) {
             client_address = QHostAddress(QString(argv[i+1]));
             client_port = QString(argv[i+2]).toInt();
             i+=2;
@@ -75,20 +76,12 @@ void Task::run()
 
     //setup client socket for receiving
     client_socket = new QUdpSocket(this);
-    client_socket->bind(QHostAddress::LocalHost, 6666);
+    client_socket->bind(QHostAddress::LocalHost, 5555);
+    client_socket->connectToHost(client_address, client_port, QIODevice::ReadWrite);
+    client_socket->waitForConnected();
 
-    //setup hifi server socket for sending
-    server_socket = new QUdpSocket(this);
-    server_socket->bind(QHostAddress::LocalHost, 7777);
-
-    signal_mapper = new QSignalMapper(this);
-    signal_mapper->setMapping(client_socket, QString("client"));
-    signal_mapper->setMapping(server_socket, QString("server"));
-
-    connect(client_socket, SIGNAL(readyRead()), signal_mapper, SLOT (map()));
-    connect(server_socket, SIGNAL(readyRead()), signal_mapper, SLOT (map()));
-
-    connect(signal_mapper, SIGNAL(mapped(QString)), this, SLOT(readPendingDatagrams(QString)));
+    connect(client_socket, SIGNAL(readyRead()), this, SLOT (relayToServer()));
+    Node::setClientSocket(client_socket);
 
     connect(this, SIGNAL(stunFinished()), this, SLOT(startIce()));
     connect(this, SIGNAL(iceFinished()), this, SLOT(startDomainIcePing()));
@@ -98,6 +91,22 @@ void Task::run()
 
     // Application runs indefinitely (until terminated - e.g. Ctrl+C)
     //    emit finished();
+}
+
+void Task::relayToServer()
+{
+    //Event loop calls this function each time client socket is ready for reading
+    qDebug() << "Task::relayToServer()";
+    qDebug() << "TODO: PARSE PACKET AND SEND TO CORRECT SERVER; CHECK IF NULLPTR FIRST";
+
+    while (client_socket->hasPendingDatagrams()) {
+        QByteArray datagram;
+        datagram.resize(client_socket->pendingDatagramSize());
+        QHostAddress sender;
+        quint16 senderPort;
+
+        client_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+    }
 }
 
 void Task::domainRequestFinished()
@@ -163,7 +172,7 @@ void Task::startIce()
     connect(hifi_response_timer, &QTimer::timeout, this, &Task::sendIceRequest);
     hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
-    hifi_socket->bind(local_address, local_port);
+    hifi_socket->bind(local_address, local_port, QAbstractSocket::ShareAddress);
     if (!use_custom_ice_server){
         hifi_socket->connectToHost(ice_server_hostname, ice_server_port, QIODevice::ReadWrite, QAbstractSocket::IPv4Protocol);
     }
@@ -205,31 +214,6 @@ void Task::startDomainConnect()
     hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     hifi_response_timer->start();
-}
-
-void Task::readPendingDatagrams(QString f)
-{
-    //Event loop calls this function each time client socket is ready for reading
-    qDebug() << "Task::readPendingDatagrams()";
-
-    QUdpSocket * from = (f == "client") ? client_socket : server_socket;
-    QUdpSocket * to = (f == "client") ? server_socket : client_socket;
-    QHostAddress address = (f == "client") ? server_address : client_address;
-    quint16 port = (f == "client") ? server_port : client_port;
-
-    while (from->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(from->pendingDatagramSize());
-        QHostAddress sender;
-        quint16 senderPort;
-
-        from->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-
-        //Output debug information (for debug builds, not for production release)
-        qDebug() << "Task::readPendingDatagrams() - read packet from " << sender << f << ":" << senderPort << " of size " << datagram.size() << " bytes";
-
-        to->writeDatagram(datagram, address, port);
-    }
 }
 
 void Task::parseStunResponse()
@@ -380,11 +364,46 @@ void Task::parseDomainResponse()
             if (!started_domain_connect) emit domainPinged();
         }
         else if (domainResponsePacket->getType() == PacketType::DomainList) {
-            qDebug() << "TODO: parse domain list and connect";
+            qDebug() << "Task::parseDomainResponse() - Process domain list";
+            QDataStream packetStream(domainResponsePacket.get()->readAll());
+
+            // grab the domain's ID from the beginning of the packet
+            QUuid domainUUID;
+            packetStream >> domainUUID;
+
+            if (domain_connected && domain_id != domainUUID) {
+                // Recieved packet from different domain.
+                qDebug() << "Task::parseDomainResponse() - Received packet from different domain";
+                continue;
+            }
+
+            quint16 domain_local_id;
+            packetStream >> domain_local_id;
+
+            // pull our owner (ie. session) UUID from the packet, it's always the first thing
+            // The short (16 bit) ID comes next.
+            packetStream >> session_id;
+            packetStream >> local_id;
 
             // if this was the first domain-server list from this domain, we've now connected
             if (!domain_connected) {
                 domain_connected = true;
+            }
+
+            // pull the permissions/right/privileges for this node out of the stream
+            uint newPermissions;
+            packetStream >> newPermissions;
+            permissions = (Permissions) newPermissions;
+
+            // Is packet authentication enabled?
+            bool isAuthenticated;
+            packetStream >> isAuthenticated; //TODO: handle authentication of packets
+
+            //qDebug() << domainUUID << domain_local_id << session_id << local_id << newPermissions << isAuthenticated;
+
+            // pull each node in the packet
+            while (packetStream.device()->pos() < domainResponsePacket.get()->getDataSize() - domainResponsePacket.get()->totalHeaderSize()) {
+                parseNodeFromPacketStream(packetStream);
             }
         }
         else if (domainResponsePacket->getType() == PacketType::DomainConnectionDenied) {
@@ -479,6 +498,87 @@ void Task::sendIceRequest()
     //hifi_socket->writeDatagram(iceRequestPacket, packetSize, hifi_socket->peerAddress(), hifi_socket->peerPort());
 }
 
+void Task::parseNodeFromPacketStream(QDataStream& packetStream)
+{
+    // setup variables to read into from QDataStream
+    NodeType_t nodeType;
+    QUuid nodeUUID, connectionSecretUUID;
+    QHostAddress nodePublicAddress, nodeLocalAddress;
+    quint16 nodePublicPort, nodeLocalPort;
+    uint nodePermissions;
+    bool isReplicated;
+    quint16 sessionLocalID;
+
+    packetStream >> nodeType >> nodeUUID >> nodePublicAddress >> nodePublicPort >> nodeLocalAddress >> nodeLocalPort >> nodePermissions
+        >> isReplicated >> sessionLocalID;
+
+    // if the public socket address is 0 then it's reachable at the same IP
+    // as the domain server
+    if (nodePublicAddress.isNull()) {
+        nodePublicAddress = public_address;
+    }
+
+    packetStream >> connectionSecretUUID;
+
+    //qDebug() << (char) nodeType << nodeUUID << nodePublicAddress << nodePublicPort << nodeLocalAddress << nodeLocalPort << nodePermissions
+    //          << isReplicated << sessionLocalID << connectionSecretUUID;
+
+    Node * node = new Node();
+    node->setNodeID(nodeUUID);
+    node->setNodeType(nodeType);
+    node->setPublicAddress(nodePublicAddress, nodePublicPort);
+    node->setLocalAddress(nodeLocalAddress, nodeLocalPort);
+    node->setSessionLocalID(sessionLocalID);
+    node->setDomainSessionLocalID(local_id);
+    node->setIsReplicated(isReplicated);
+    node->setConnectionSecret(connectionSecretUUID);
+    node->setPermissions((Permissions) nodePermissions);
+
+    switch (nodeType) {
+        case NodeType::AssetServer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering asset server" << nodePublicAddress << nodePublicPort;
+            asset_server = node;
+            break;
+        }
+        case NodeType::AudioMixer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering audio mixer" << nodePublicAddress << nodePublicPort;
+            audio_mixer = node;
+            break;
+        }
+        case NodeType::AvatarMixer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering avatar mixer" << nodePublicAddress << nodePublicPort;
+            avatar_mixer = node;
+            break;
+        }
+        case NodeType::MessagesMixer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering messages mixer" << nodePublicAddress << nodePublicPort;
+            messages_mixer = node;
+            break;
+        }
+        case NodeType::EntityServer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering entity server" << nodePublicAddress << nodePublicPort;
+            entity_server = node;
+            break;
+        }
+        case NodeType::EntityScriptServer : {
+            qDebug() << "Task::parseNodeFromPacketStream() - Registering entity script server" << nodePublicAddress << nodePublicPort;
+            entity_script_server = node;
+            break;
+        }
+        default: {
+                break;
+        }
+    }
+
+    // nodes that are downstream or upstream of our own type are kept alive when we hear about them from the domain server
+    // and always have their public socket as their active socket
+    //if (node->getType() == NodeType::downstreamType(_ownerType) || node->getType() == NodeType::upstreamType(_ownerType)) {
+    //    node->setLastHeardMicrostamp(usecTimestampNow());
+        node->activatePublicSocket(local_address, local_port);
+        //node->sendPing();
+    //}
+}
+
 void Task::sendDomainIcePing()
 {
     if (!finished_domain_id_request) {
@@ -487,8 +587,8 @@ void Task::sendDomainIcePing()
 
     if (domain_connected) {
         qDebug() << "Task::sendDomainIcePing() - Stopping ICE server pings";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        hifi_ping_timer->stop();
+        hifi_ping_timer->deleteLater();
         return;
     }
 

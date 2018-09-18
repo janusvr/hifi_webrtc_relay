@@ -6,6 +6,8 @@
 #include <QDebug>
 #include <QUuid>
 
+#include "hmacauth.h"
+
 class PacketTypeEnum {
 public:
     // If adding a new packet packetType, you can replace one marked usable or add at the end.
@@ -380,6 +382,9 @@ public:
 
     void obfuscate(ObfuscationLevel level);
 
+    void writeSourceID(quint16 sourceID);
+    void writeVerificationHash(HMACAuth * hmacAuth);
+
     void adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize = false);
 
     qint64 bytesLeftToRead() const { return payloadSize - pos();}
@@ -395,7 +400,10 @@ public:
     qint64 getDataSize() const { return (payloadStart - packet.get()) + payloadSize; }
 
     PacketType getType() {return type;}
+    bool getIsPartOfMessage() const {return isPartOfMessage;}
     uint32_t getSequenceNumber() {return sequenceNumber;}
+
+    static QByteArray hashForPacketAndHMAC(const Packet& packet, HMACAuth * hash);
 
 private:
     PacketType type;
@@ -413,6 +421,8 @@ private:
     short packetPosition;
     uint32_t * messagePartNumber;
     uint32_t sequenceNumber;
+
+    quint16 sourceID;
 
     std::unique_ptr<char[]> packet;
 };

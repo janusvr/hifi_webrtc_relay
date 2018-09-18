@@ -11,60 +11,8 @@
 #include <QUuid>
 
 #include "packet.h"
+#include "node.h"
 #include "utils.h"
-
-const uint32_t RFC_5389_MAGIC_COOKIE = 0x2112A442;
-const int NUM_BYTES_STUN_HEADER = 20;
-
-const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
-const int HIFI_INITIAL_UPDATE_INTERVAL_MSEC = 250;
-const int HIFI_PING_UPDATE_INTERVAL_MSEC = 1000;
-const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
-const int NUM_BYTES_RFC4122_UUID = 16;
-
-typedef quint8 NodeType_t;
-
-namespace NodeType {
-    const NodeType_t DomainServer = 'D';
-    const NodeType_t EntityServer = 'o'; // was ModelServer
-    const NodeType_t Agent = 'I';
-    const NodeType_t AudioMixer = 'M';
-    const NodeType_t AvatarMixer = 'W';
-    const NodeType_t AssetServer = 'A';
-    const NodeType_t MessagesMixer = 'm';
-    const NodeType_t EntityScriptServer = 'S';
-    const NodeType_t UpstreamAudioMixer = 'B';
-    const NodeType_t UpstreamAvatarMixer = 'C';
-    const NodeType_t DownstreamAudioMixer = 'a';
-    const NodeType_t DownstreamAvatarMixer = 'w';
-    const NodeType_t Unassigned = 1;
-
-    const QString& getNodeTypeName(NodeType_t nodeType);
-    bool isUpstream(NodeType_t nodeType);
-    bool isDownstream(NodeType_t nodeType);
-    NodeType_t upstreamType(NodeType_t primaryType);
-    NodeType_t downstreamType(NodeType_t primaryType);
-
-
-    NodeType_t fromString(QString type);
-}
-
-typedef QSet<NodeType_t> NodeSet;
-
-enum class Permission {
-    none = 0,
-    canConnectToDomain = 1,
-    canAdjustLocks = 2,
-    canRezPermanentEntities = 4,
-    canRezTemporaryEntities = 8,
-    canWriteToAssetServer = 16,
-    canConnectPastMaxCapacity = 32,
-    canKick = 64,
-    canReplaceDomainContent = 128,
-    canRezPermanentCertifiedEntities = 256,
-    canRezTemporaryCertifiedEntities = 512
-};
-Q_DECLARE_FLAGS(Permissions, Permission)
 
 class Task : public QObject
 {
@@ -80,10 +28,13 @@ public:
     void sendIcePing(quint8 pingType);
     void sendIcePingReply(Packet * icePing);
 
+    void parseNodeFromPacketStream(QDataStream& packetStream);
+
 public slots:
 
+    void relayToServer();
+
     void run();
-    void readPendingDatagrams(QString f);
     void startIce();
     void startStun();
     void startDomainIcePing();
@@ -114,15 +65,9 @@ private:
         return uuidStringNoBraces;
     }
 
-    QSignalMapper * signal_mapper;
-
     QUdpSocket * client_socket;
     QHostAddress client_address;
     quint16 client_port;
-
-    QUdpSocket * server_socket;
-    QHostAddress server_address;
-    quint16 server_port;
 
     QUdpSocket * hifi_socket;
     QTimer * hifi_ping_timer;
@@ -170,5 +115,13 @@ private:
     quint16 local_id;
 
     Permissions permissions;
+
+    Node * asset_server;
+    Node * audio_mixer;
+    Node * avatar_mixer;
+    Node * messages_mixer;
+    Node * entity_server;
+    Node * entity_script_server;
+
 };
 #endif // TASK_H

@@ -18,11 +18,22 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += main.cpp \
     task.cpp \
     packet.cpp \
-    utils.cpp
+    utils.cpp \
+    node.cpp \
+    hmacauth.cpp
 
 HEADERS += \
     task.h \
     packet.h \
-    utils.h
+    utils.h \
+    node.h \
+    hmacauth.h
+
+unix:macx:LIBS += -L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto
+unix:macx:INCLUDEPATH += "/usr/local/Cellar/openssl/1.0.2o_1/include"
+
+unix:macx:OPENSSL_LIBS='-L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto'
+
+unix:macx:CONFIG += openssl-linked
 
 unix:macx:LIBS += -framework IOKit -framework CoreFoundation

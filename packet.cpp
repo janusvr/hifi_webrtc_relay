@@ -298,3 +298,42 @@ void Packet::obfuscate(ObfuscationLevel level) {
         }
     }
 }
+
+void Packet::writeSourceID(quint16 s)
+{
+    if (PacketTypeEnum::getNonSourcedPackets().contains(type)) return;
+
+    auto offset = Packet::headerSize(false) + sizeof(PacketType) + sizeof(PacketVersion);
+
+    memcpy(packet.get() + offset, &s, sizeof(s));
+
+    sourceID = s;
+    //qDebug() << "source id"  << sourceID;
+}
+
+QByteArray Packet::hashForPacketAndHMAC(const Packet& packet, HMACAuth * hash) {
+    int offset = Packet::headerSize(packet.getIsPartOfMessage()) + sizeof(PacketType) + sizeof(PacketVersion)
+        + 2 + 16;
+
+    // add the packet payload and the connection UUID
+    HMACAuth::HMACHash hashResult;
+    if (!hash->calculateHash(hashResult, packet.getData() + offset, packet.getDataSize() - offset)) {
+        return QByteArray();
+    }
+    return QByteArray((const char*) hashResult.data(), (int) hashResult.size());
+}
+
+void Packet::writeVerificationHash(HMACAuth * hmacAuth)
+{
+    if (PacketTypeEnum::getNonSourcedPackets().contains(type) || PacketTypeEnum::getNonVerifiedPackets().contains(type))
+        return;
+
+    auto offset = Packet::headerSize(false) + sizeof(PacketType) + sizeof(PacketVersion)
+                + 2; // Num bytes of localID
+
+    QByteArray verificationHash = hashForPacketAndHMAC(*this, hmacAuth);
+
+    //qDebug() << "verification hash" << verificationHash << verificationHash.size();
+
+    memcpy(packet.get() + offset, verificationHash.data(), verificationHash.size());
+}

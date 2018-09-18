@@ -14,6 +14,8 @@
 QByteArray Utils::protocolVersionSignature = QByteArray();
 QString Utils::protocolVersionSignatureBase64 = QString();
 QUuid Utils::machineFingerprint = QUuid();
+quint64 Utils::TIMESTAMP_REF = 0;
+QElapsedTimer Utils::timestampTimer = QElapsedTimer();
 
 Utils::Utils()
 {
@@ -23,6 +25,34 @@ Utils::Utils()
 Utils::~Utils()
 {
 
+}
+
+void Utils::SetupTimestamp()
+{
+    TIMESTAMP_REF = QDateTime::currentMSecsSinceEpoch() * 1000;
+    timestampTimer.start();
+}
+
+quint64 Utils::GetTimestamp()
+{
+    quint64 now;
+    quint64 nsecsElapsed = timestampTimer.nsecsElapsed();
+    quint64 usecsElapsed = nsecsElapsed / 1000;  // nsec to usec
+
+    quint64 msecsCurrentTime = QDateTime::currentMSecsSinceEpoch();
+    quint64 msecsEstimate = (TIMESTAMP_REF + usecsElapsed) / 1000; // usecs to msecs
+    int possibleSkew = msecsEstimate - msecsCurrentTime;
+    const int TOLERANCE = 10 * 1000; // up to 10 seconds of skew is tolerated
+    if (abs(possibleSkew) > TOLERANCE) {
+        // reset our TIME_REFERENCE and timer
+        TIMESTAMP_REF = QDateTime::currentMSecsSinceEpoch() * 1000; // ms to usec
+        timestampTimer.restart();
+        now = TIMESTAMP_REF;
+    } else {
+        now = TIMESTAMP_REF + usecsElapsed;
+    }
+
+    return now;
 }
 
 void Utils::SetupProtocolVersionSignatures()

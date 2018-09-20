@@ -1,5 +1,8 @@
 #include "task.h"
 
+#include "portableendian.h"
+//#include <webrtc/base/socketaddress.h>
+
 Task::Task(QObject * parent) :
     QObject(parent),
     client_address(QHostAddress::LocalHost),
@@ -29,6 +32,9 @@ Task::Task(QObject * parent) :
     messages_mixer = nullptr;
     entity_server = nullptr;
     entity_script_server = nullptr;
+
+    //rtc::SocketAddress sa("22.123.1.32", 9999);
+    //qDebug() << sa.port();
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])

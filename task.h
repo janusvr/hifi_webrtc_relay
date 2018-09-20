@@ -14,6 +14,12 @@
 #include "node.h"
 #include "utils.h"
 
+#ifdef Q_OS_WIN
+#include <winsock2.h>
+#include <WS2tcpip.h>
+#endif //Q_OS_WIN
+
+
 class Task : public QObject
 {
     Q_OBJECT

@@ -27,13 +27,24 @@ HEADERS += \
     packet.h \
     utils.h \
     node.h \
-    hmacauth.h
+    hmacauth.h \
+    portableendian.h
 
 unix:macx:LIBS += -L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto
 unix:macx:INCLUDEPATH += "/usr/local/Cellar/openssl/1.0.2o_1/include"
-
 unix:macx:OPENSSL_LIBS='-L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto'
-
-unix:macx:CONFIG += openssl-linked
-
 unix:macx:LIBS += -framework IOKit -framework CoreFoundation
+
+INCLUDEPATH +="./resources/openssl/include"
+win32:LIBS += -L"$$PWD/resources/openssl/x64/lib"
+win32:LIBS += -llibcrypto -llibssl
+win32:OPENSSL_LIBS ='-L"$$PWD/resources/openssl/x64/lib" -llibcrypto -llibssl'
+
+#INCLUDEPATH +="./resources/webrtc/include"
+#win32:LIBS += -L"$$PWD/resources/webrtc/lib/x64/Release"
+#win32:LIBS += -lwebrtc
+
+win32:LIBS += -L"$$PWD/resources/windows"
+win32:LIBS += -lws2_32 -lAdvAPI32
+
+CONFIG += openssl-linked

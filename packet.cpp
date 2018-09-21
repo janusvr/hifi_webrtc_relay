@@ -75,7 +75,7 @@ PacketVersion versionForPacketType(PacketType packetType) {
         case PacketType::EntityQueryInitialResultsComplete:
             return static_cast<PacketVersion>(EntityVersion::ParticleSpin);
         default:
-            return 21;
+            return 22;
     }
 }
 

@@ -80,7 +80,7 @@ public:
 
     QUdpSocket * getSocket();
 
-public slots:
+public Q_SLOTS:
     void sendNegotiateAudioFormat();
     void sendPing();
     void relayToClient();

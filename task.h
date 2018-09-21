@@ -10,15 +10,28 @@
 #include <QTimer>
 #include <QUuid>
 
-#include "packet.h"
-#include "node.h"
-#include "utils.h"
-
 #ifdef Q_OS_WIN
 #include <winsock2.h>
 #include <WS2tcpip.h>
 #endif //Q_OS_WIN
 
+#ifdef Q_OS_MAC
+#include <sys/socket.h>
+#include <netinet/in.h>
+#define WEBRTC_MAC 1
+#define WEBRTC_POSIX 1
+#endif //Q_OS_MAC
+
+#include <pc/peerconnection.h>
+#include <api/call/callfactoryinterface.h>
+
+#include "packet.h"
+#include "node.h"
+#include "utils.h"
+
+#include "portableendian.h"
+
+#include "peerconnectionhandler.h"
 
 class Task : public QObject
 {
@@ -36,7 +49,7 @@ public:
 
     void parseNodeFromPacketStream(QDataStream& packetStream);
 
-public slots:
+public Q_SLOTS:
 
     void relayToServer();
 
@@ -56,7 +69,7 @@ public slots:
 
     void domainRequestFinished();
 
-signals:
+Q_SIGNALS:
 
     void finished();
 

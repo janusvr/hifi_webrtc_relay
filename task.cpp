@@ -1,8 +1,5 @@
 #include "task.h"
 
-#include "portableendian.h"
-//#include <webrtc/base/socketaddress.h>
-
 Task::Task(QObject * parent) :
     QObject(parent),
     client_address(QHostAddress::LocalHost),
@@ -32,9 +29,6 @@ Task::Task(QObject * parent) :
     messages_mixer = nullptr;
     entity_server = nullptr;
     entity_script_server = nullptr;
-
-    //rtc::SocketAddress sa("22.123.1.32", 9999);
-    //qDebug() << sa.port();
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])
@@ -73,6 +67,38 @@ void Task::processCommandLineArguments(int argc, char * argv[])
 
 void Task::run()
 {
+    // 1. Create PeerConnectionFactoryInterface if it doesn't exist.
+    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> g_peer_connection_factory = nullptr;
+    if (g_peer_connection_factory == nullptr) {
+      g_peer_connection_factory = webrtc::CreateModularPeerConnectionFactory(nullptr,
+                                                                             nullptr,
+                                                                             nullptr,
+                                                                             nullptr,
+                                                                             webrtc::CreateCallFactory(),
+                                                                             nullptr);
+    }
+
+    // 2. Create a new PeerConnection.
+    webrtc::PeerConnectionInterface::RTCConfiguration config;
+    config.enable_rtp_data_channel = true;
+    config.enable_dtls_srtp = false;
+    PeerConnectionHandler * peer_connection_handler = new PeerConnectionHandler();
+    g_peer_connection_factory->CreatePeerConnection(config, nullptr, nullptr, peer_connection_handler);
+
+    // 3. Provide the remote offer to the new PeerConnection object by calling
+    // SetRemoteDescription.
+    //
+    // 4. Generate an answer to the remote offer by calling CreateAnswer and send it
+    // back to the remote peer.
+    //
+    // 5. Provide the local answer to the new PeerConnection by calling
+    // SetLocalDescription with the answer.
+    //
+    // 6. Provide the remote ICE candidates by calling AddIceCandidate.
+    //
+    // 7. Once a candidate has been gathered, the PeerConnection will call the
+    // observer function OnIceCandidate. Send these candidates to the remote peer.
+
     // Domain ID lookup
     QNetworkAccessManager * nam = new QNetworkAccessManager(this);
     QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
@@ -86,14 +112,13 @@ void Task::run()
     client_socket->connectToHost(client_address, client_port, QIODevice::ReadWrite);
     client_socket->waitForConnected();
 
-    connect(client_socket, SIGNAL(readyRead()), this, SLOT (relayToServer()));
+    connect(client_socket, SIGNAL(readyRead()), this, SLOT(relayToServer()));
     Node::setClientSocket(client_socket);
-
 
     startStun();
 
     // Application runs indefinitely (until terminated - e.g. Ctrl+C)
-    //    emit finished();
+    //    Q_EMIT finished();
 }
 
 void Task::relayToServer()
@@ -623,27 +648,7 @@ void Task::sendDomainConnectRequest()
     QDataStream domainConnectDataStream(domainConnectRequestPacket.get());
     domainConnectDataStream << ice_client_id;
 
-    //QByteArray protocolVersionSig = Utils::GetProtocolVersionSignature();
-    //domainConnectDataStream.writeBytes(protocolVersionSig.constData(), protocolVersionSig.size());
-
-    //TODO: fix hardcode protocol version
-    QByteArray protocolVersionSig;
-    protocolVersionSig.push_back(0xc8);
-    protocolVersionSig.push_back(0x4d);
-    protocolVersionSig.push_back(0x93);
-    protocolVersionSig.push_back(0x15);
-    protocolVersionSig.push_back(0x28);
-    protocolVersionSig.push_back(0xdd);
-    protocolVersionSig.push_back(0x6d);
-    protocolVersionSig.push_back(0xa2);
-    protocolVersionSig.push_back(0xd4);
-    protocolVersionSig.push_back(0x72);
-    protocolVersionSig.push_back(0x64);
-    protocolVersionSig.push_back(0xcd);
-    protocolVersionSig.push_back(0x50);
-    protocolVersionSig.push_back(0xf1);
-    protocolVersionSig.push_back(0xbb);
-    protocolVersionSig.push_back(0xa8);
+    QByteArray protocolVersionSig = Utils::GetProtocolVersionSignature();
     domainConnectDataStream.writeBytes(protocolVersionSig.constData(), protocolVersionSig.size());
 
     //qDebug() << ice_client_id << protocolVersionSig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()

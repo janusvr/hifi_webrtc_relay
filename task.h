@@ -18,12 +18,7 @@
 #ifdef Q_OS_MAC
 #include <sys/socket.h>
 #include <netinet/in.h>
-#define WEBRTC_MAC 1
-#define WEBRTC_POSIX 1
 #endif //Q_OS_MAC
-
-#include <pc/peerconnection.h>
-#include <api/call/callfactoryinterface.h>
 
 #include "packet.h"
 #include "node.h"
@@ -138,5 +133,6 @@ private:
     Node * entity_server;
     Node * entity_script_server;
 
+    PeerConnectionHandler * peer_connection;
 };
 #endif // TASK_H

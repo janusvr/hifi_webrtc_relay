@@ -29,6 +29,8 @@ Task::Task(QObject * parent) :
     messages_mixer = nullptr;
     entity_server = nullptr;
     entity_script_server = nullptr;
+
+    PeerConnectionHandler::Initialize();
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])
@@ -67,37 +69,7 @@ void Task::processCommandLineArguments(int argc, char * argv[])
 
 void Task::run()
 {
-    // 1. Create PeerConnectionFactoryInterface if it doesn't exist.
-    rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> g_peer_connection_factory = nullptr;
-    if (g_peer_connection_factory == nullptr) {
-      g_peer_connection_factory = webrtc::CreateModularPeerConnectionFactory(nullptr,
-                                                                             nullptr,
-                                                                             nullptr,
-                                                                             nullptr,
-                                                                             webrtc::CreateCallFactory(),
-                                                                             nullptr);
-    }
-
-    // 2. Create a new PeerConnection.
-    webrtc::PeerConnectionInterface::RTCConfiguration config;
-    config.enable_rtp_data_channel = true;
-    config.enable_dtls_srtp = false;
-    PeerConnectionHandler * peer_connection_handler = new PeerConnectionHandler();
-    g_peer_connection_factory->CreatePeerConnection(config, nullptr, nullptr, peer_connection_handler);
-
-    // 3. Provide the remote offer to the new PeerConnection object by calling
-    // SetRemoteDescription.
-    //
-    // 4. Generate an answer to the remote offer by calling CreateAnswer and send it
-    // back to the remote peer.
-    //
-    // 5. Provide the local answer to the new PeerConnection by calling
-    // SetLocalDescription with the answer.
-    //
-    // 6. Provide the remote ICE candidates by calling AddIceCandidate.
-    //
-    // 7. Once a candidate has been gathered, the PeerConnection will call the
-    // observer function OnIceCandidate. Send these candidates to the remote peer.
+    peer_connection = new PeerConnectionHandler();
 
     // Domain ID lookup
     QNetworkAccessManager * nam = new QNetworkAccessManager(this);
@@ -125,7 +97,6 @@ void Task::relayToServer()
 {
     //Event loop calls this function each time client socket is ready for reading
     qDebug() << "Task::relayToServer()";
-    qDebug() << "TODO: PARSE PACKET AND SEND TO CORRECT SERVER; CHECK IF NULLPTR FIRST";
 
     while (client_socket->hasPendingDatagrams()) {
         QByteArray datagram;

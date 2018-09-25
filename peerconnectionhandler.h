@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QDebug>
+#include <QtWebSockets/QtWebSockets>
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
@@ -22,6 +23,13 @@
 #include <api/datachannelinterface.h>
 #include <api/jsep.h>
 #include <rtc_base/refcount.h>
+#include <rtc_base/openssladapter.h>
+#include <api/audio_codecs/builtin_audio_decoder_factory.h>
+#include <api/audio_codecs/builtin_audio_encoder_factory.h>
+#include <media/engine/internaldecoderfactory.h>
+#include <media/engine/internalencoderfactory.h>
+#include <media/engine/webrtcmediaengine.h>
+#include "modules/audio_processing/include/audio_processing.h"
 
 class PeerConnectionHandler : public QObject,
     public webrtc::DataChannelObserver,
@@ -66,12 +74,34 @@ public:
     void OnMessage(const webrtc::DataBuffer& buffer);
     void OnBufferedAmountChange(uint64_t previous_amount);
 
+public Q_SLOTS:
+    void Connect();
+    void Disconnect();
+    void ServerConnected();
+    void ServerDisconnected();
+    void ClientMessageReceived(const QString &message);
+    void ClientBinaryMessageReceived(const QByteArray &message);
+    void ClientDisconnected();
+    void MessageReceived(const QString &message);
+    void BinaryMessageReceived(const QByteArray &message);
+
 private:
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> local_peer_connection;
     rtc::scoped_refptr<webrtc::PeerConnectionInterface> remote_peer_connection;
 
     static webrtc::DataChannelInit * data_channel_init;
     static rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_factory;
+
+    QWebSocketServer * signaling_server;
+    QWebSocket * signaling_socket;
+    QWebSocket * server_side_signaling_socket;
+
+    QList<QWebSocket *> client_sockets;
+
+    static rtc::Thread * networking_thread;
+    static rtc::Thread * worker_thread;
+    static rtc::Thread * signaling_thread;
+
+    static std::unique_ptr<rtc::RTCCertificateGeneratorInterface> certificate_generator;
 };
 
 #endif // PEERCONNECTIONHANDLER_H

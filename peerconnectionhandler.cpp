@@ -1,42 +1,23 @@
 #include "peerconnectionhandler.h"
 
-webrtc::DataChannelInit * PeerConnectionHandler::data_channel_init = nullptr;
-rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> PeerConnectionHandler::peer_connection_factory = nullptr;
-rtc::Thread * PeerConnectionHandler::networking_thread = nullptr;
-rtc::Thread * PeerConnectionHandler::worker_thread = nullptr;
-rtc::Thread * PeerConnectionHandler::signaling_thread = nullptr;
-std::unique_ptr<rtc::RTCCertificateGeneratorInterface> PeerConnectionHandler::certificate_generator = nullptr;
+//TODO: handle multiple clients
 
 PeerConnectionHandler::PeerConnectionHandler()
 {
-    // 2. Create a new PeerConnection.
-    webrtc::PeerConnectionInterface::RTCConfiguration config(webrtc::PeerConnectionInterface::RTCConfigurationType::kSafe);
-    config.certificates.push_back(
-                rtc::RTCCertificateGenerator::GenerateCertificate(rtc::KeyParams(),
-                                                                           absl::nullopt));
-
-    remote_peer_connection = peer_connection_factory->CreatePeerConnection(config, nullptr, std::move(certificate_generator), this);
-
     signaling_server = new QWebSocketServer(QStringLiteral("Signaling Server"), QWebSocketServer::NonSecureMode, this);
 
-    if (signaling_server->listen(QHostAddress::LocalHost, 8108)) {
-        connect(signaling_server, &QWebSocketServer::newConnection,
-                this, &PeerConnectionHandler::Connect);
+    if (signaling_server->listen(QHostAddress::LocalHost, 8142)) {
+        connect(signaling_server, &QWebSocketServer::newConnection, this, &PeerConnectionHandler::Connect);
         connect(signaling_server, &QWebSocketServer::closed, this, &PeerConnectionHandler::Disconnect);
     }
-
-    signaling_socket = new QWebSocket();
-    connect(signaling_socket, &QWebSocket::connected, this, &PeerConnectionHandler::ServerConnected);
-    connect(signaling_socket, &QWebSocket::disconnected, this, &PeerConnectionHandler::ServerDisconnected);
-    connect(signaling_socket, &QWebSocket::textMessageReceived, this, &PeerConnectionHandler::MessageReceived);
-    connect(signaling_socket, &QWebSocket::binaryMessageReceived, this, &PeerConnectionHandler::BinaryMessageReceived);
-
-    signaling_socket->open(QUrl("ws://localhost:8108"));
 }
 
 PeerConnectionHandler::~PeerConnectionHandler()
 {
-    signaling_socket->close();
+    for (int i = 0; i < client_sockets.size(); i++)
+    {
+        client_sockets[i]->close();
+    }
     signaling_server->close();
 }
 
@@ -44,21 +25,26 @@ void PeerConnectionHandler::Connect()
 {
     QWebSocket *s = signaling_server->nextPendingConnection();
 
-    qDebug() << "connect" << signaling_socket->localAddress() << signaling_socket->localPort() << s << s->peerAddress() << s->peerPort();
-    if (!client_sockets.contains(s) && !(s->peerAddress() == signaling_socket->localAddress() && s->peerPort() == signaling_socket->localPort()))
+    //Loop through client sockets, if different peerAddress and peerPort then add the new socket
+    bool new_socket = true;
+    for (int i = 0; i < client_sockets.size(); i++)
+    {
+        if (client_sockets[i]->peerAddress() == s->peerAddress() && client_sockets[i]->peerPort() == s->peerPort()) {
+            new_socket = false;
+            break;
+        }
+    }
+
+    qDebug() << "connect" << s << s->peerAddress() << s->peerPort();
+    if (new_socket)
     {
         qDebug() << "new client";
         connect(s, &QWebSocket::textMessageReceived, this, &PeerConnectionHandler::ClientMessageReceived);
-        connect(s, &QWebSocket::binaryMessageReceived, this, &PeerConnectionHandler::ClientBinaryMessageReceived);
         connect(s, &QWebSocket::disconnected, this, &PeerConnectionHandler::ClientDisconnected);
 
         client_sockets.push_back(s);
 
         s->sendTextMessage("connected");
-    }
-    else if (s->peerAddress() == signaling_socket->localAddress() && s->peerPort() == signaling_socket->localPort())
-    {
-        server_side_signaling_socket = s;
     }
 }
 
@@ -69,24 +55,218 @@ void PeerConnectionHandler::Disconnect()
 
 void PeerConnectionHandler::ServerConnected()
 {
-    qDebug() << "connected";
+    //qDebug() << "PeerConnectionHandler::ServerConnected()";
 }
 
 void PeerConnectionHandler::ServerDisconnected()
 {
-    qDebug() << "disconnected";
-}
-
-void PeerConnectionHandler::ClientBinaryMessageReceived(const QByteArray &message)
-{
-    qDebug() << "clientmessage" << message;
-    server_side_signaling_socket->sendBinaryMessage(message);
+    //qDebug() << "PeerConnectionHandler::ServerDisconnected()";
 }
 
 void PeerConnectionHandler::ClientMessageReceived(const QString &message)
 {
-    qDebug() << "clientmessage" << message;
-    server_side_signaling_socket->sendTextMessage(message);
+    qDebug() << "PeerConnectionHandler::ClientMessageReceived() - " << message;
+    QWebSocket *client = qobject_cast<QWebSocket *>(sender());
+
+    QJsonDocument doc;
+    doc = QJsonDocument::fromJson(message.toLatin1());
+    QJsonObject obj = doc.object();
+    QString type = obj["type"].toString();
+    if (type == "offer")
+    {
+        rtcdcpp::RTCConfiguration config;
+        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun3.l.google.com", 19302});
+
+        std::function<void(rtcdcpp::PeerConnection::IceCandidate)> onLocalIceCandidate = [this,client](rtcdcpp::PeerConnection::IceCandidate candidate) {
+            QJsonObject candidateObject;
+            candidateObject.insert("type", QJsonValue::fromVariant("candidate"));
+            QJsonObject candidateObject2;
+            candidateObject2.insert("candidate", QJsonValue::fromVariant(QString::fromStdString(candidate.candidate)));
+            candidateObject2.insert("sdpMid", QJsonValue::fromVariant(QString::fromStdString(candidate.sdpMid)));
+            candidateObject2.insert("sdpMLineIndex", QJsonValue::fromVariant(candidate.sdpMLineIndex));
+            candidateObject.insert("candidate", candidateObject2);
+            QJsonDocument candidateDoc(candidateObject);
+
+            qDebug() << "candidate: " << candidateDoc.toJson();
+            client->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
+        };
+
+        std::function<void(std::shared_ptr<rtcdcpp::DataChannel> channel)> onDataChannel = [this](std::shared_ptr<rtcdcpp::DataChannel> channel) {
+            qDebug() << "datachannel" << QString::fromStdString(channel->GetLabel());
+            QString label = QString::fromStdString(channel->GetLabel());
+            if (label == "domain_server_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "domainserverdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "domainserverdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "domainserverdcclosed";
+                    this->SetDomainServerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering domain server data channel";
+                this->SetDomainServerDC(channel);
+                this->SendDomainServerMessage(QString("message"));
+            }
+            else if (label == "audio_mixer_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "audiomixerdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "audiomixerdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "audiomixerdcclosed";
+                    this->SetAudioMixerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering audio mixer data channel";
+                this->SetAudioMixerDC(channel);
+                this->SendAudioMixerMessage(QString("message"));
+            }
+            else if (label == "avatar_mixer_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "avatarmixerdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "avatarmixerdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "avatarmixerdcclosed";
+                    this->SetAvatarMixerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering avatar mixer data channel";
+                this->SetAvatarMixerDC(channel);
+                this->SendAvatarMixerMessage(QString("message"));
+            }
+            else if (label == "entity_server_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "entityserverdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "entityserverdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "entityserverdcclosed";
+                    this->SetEntityServerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering entity server data channel";
+                this->SetEntityServerDC(channel);
+                this->SendEntityServerMessage(QString("message"));
+            }
+            else if (label == "entity_script_server_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "entityscriptserverdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "entityscriptserverdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "entityscriptserverdcclosed";
+                    this->SetEntityScriptServerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering entity script server data channel";
+                this->SetEntityScriptServerDC(channel);
+                this->SendEntityScriptServerMessage(QString("message"));
+            }
+            else if (label == "messages_mixer_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "messagesmixerdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "messagesmixerdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "messagesmixerdcclosed";
+                    this->SetMessagesMixerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering messages mixer data channel";
+                this->SetMessagesMixerDC(channel);
+                this->SendMessagesMixerMessage(QString("message"));
+            }
+            else if (label == "asset_server_dc") {
+                std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+                    qDebug() << "assetserverdcmessage" << QString::fromStdString(message);
+                };
+                channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+                std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+                    QByteArray m = QByteArray((char *) message->Data(), message->Length());
+                    qDebug() << "assetserverdcbinarymessage" << m;
+                };
+                channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+                std::function<void()> onClosed = [this]() {
+                    qDebug() << "assetserverdcclosed";
+                    this->SetAssetServerDC(nullptr);
+                };
+                channel->SetOnClosedCallback(onClosed);
+
+                qDebug() << "PeerConnectionHandler::onDataChannel() - Registering asset server data channel";
+                this->SetAssetServerDC(channel);
+                this->SendAssetServerMessage(QString("message"));
+            }
+        };
+
+        remote_peer_connection = std::make_shared<rtcdcpp::PeerConnection>(config, onLocalIceCandidate, onDataChannel);
+
+        remote_peer_connection->ParseOffer(obj["sdp"].toString().toStdString());
+        QJsonObject answerObject;
+        answerObject.insert("type", QJsonValue::fromVariant("answer"));
+        answerObject.insert("sdp", QJsonValue::fromVariant(QString::fromStdString(remote_peer_connection->GenerateAnswer())));
+        QJsonDocument answerDoc(answerObject);
+
+        qDebug() << "Sending Answer: " << answerDoc.toJson();
+        client->sendTextMessage(QString::fromStdString(answerDoc.toJson().toStdString()));
+    }
+    else if (type == "candidate")
+    {
+        qDebug() << "remote candidate";
+        QJsonObject c = obj["candidate"].toObject();
+        remote_peer_connection->SetRemoteIceCandidate("a=" + c["candidate"].toString().toStdString());
+    }
 }
 
 void PeerConnectionHandler::ClientDisconnected()
@@ -96,209 +276,4 @@ void PeerConnectionHandler::ClientDisconnected()
         client_sockets.removeAll(s);
         s->deleteLater();
     }
-}
-
-void PeerConnectionHandler::BinaryMessageReceived(const QByteArray &message)
-{
-    qDebug() << "message" << message;
-
-    QJsonDocument doc;
-    doc = QJsonDocument::fromJson(message);
-    QJsonObject obj = doc.object();
-    QString type = obj["type"].toString();
-    if (type == "offer")
-    {
-        QString sdp = obj["sdp"].toString();
-        std::unique_ptr<webrtc::SessionDescriptionInterface> desc = webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, sdp.toStdString());
-        qDebug() << "message" << type << sdp;
-        remote_peer_connection->SetRemoteDescription(this,desc.get());
-    }
-    else if (type == "ice")
-    {
-        QString sdp = obj["sdp"].toString();
-        //std::unique_ptr<SessionDescriptionInterface> desc = CreateSessionDescription(webrtc::SdpType::kAnswer, sdp.toStdString());
-        qDebug() << "message" << type << sdp;
-    }
-}
-
-void PeerConnectionHandler::MessageReceived(const QString &message)
-{
-    //qDebug() << "message" << message;
-    QJsonDocument doc;
-    doc = QJsonDocument::fromJson(message.toLatin1());
-    QJsonObject obj = doc.object();
-    QString type = obj["type"].toString();
-    if (type == "offer")
-    {
-        QString sdp = obj["sdp"].toString();
-        std::unique_ptr<webrtc::SessionDescriptionInterface> desc = webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, sdp.toStdString());
-        qDebug() << "message" << type << sdp;
-        remote_peer_connection->SetRemoteDescription(this,desc.get());
-    }
-    else if (type == "ice")
-    {
-        QString sdp = obj["sdp"].toString();
-        //std::unique_ptr<SessionDescriptionInterface> desc = CreateSessionDescription(webrtc::SdpType::kAnswer, sdp.toStdString());
-        qDebug() << "message" << type << sdp;
-    }
-}
-
-void PeerConnectionHandler::Initialize()
-{
-    // 1. Create PeerConnectionFactoryInterface if it doesn't exist.
-    rtc::InitializeSSL();
-    rtc::InitRandom(rtc::Time());
-    rtc::ThreadManager::Instance()->WrapCurrentThread();
-
-    networking_thread = new rtc::Thread();
-    networking_thread->Start();
-    worker_thread = new rtc::Thread();
-    worker_thread->Start();
-    signaling_thread = new rtc::Thread();
-    signaling_thread->Start();
-
-    std::unique_ptr<cricket::MediaEngineInterface> media_engine =
-        cricket::WebRtcMediaEngineFactory::Create(
-            nullptr /* adm */, webrtc::CreateBuiltinAudioEncoderFactory(),
-            webrtc::CreateBuiltinAudioDecoderFactory(),
-            absl::make_unique<webrtc::InternalEncoderFactory>(),
-            absl::make_unique<webrtc::InternalDecoderFactory>(),
-            nullptr /* audio_mixer */, webrtc::AudioProcessingBuilder().Create());
-
-    peer_connection_factory = webrtc::CreateModularPeerConnectionFactory(networking_thread,
-                                                                         worker_thread,
-                                                                         signaling_thread,
-                                                                         std::move(media_engine),
-                                                                         webrtc::CreateCallFactory(),
-                                                                         webrtc::CreateRtcEventLogFactory());
-
-    certificate_generator.reset(new rtc::RTCCertificateGenerator(signaling_thread, worker_thread));
-    data_channel_init = new webrtc::DataChannelInit();
-}
-
-void PeerConnectionHandler::OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState new_state)
-{
-
-}
-
-void PeerConnectionHandler::OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream)
-{
-
-}
-
-void PeerConnectionHandler::OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream)
-{
-
-}
-
-void PeerConnectionHandler::OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel)
-{
-    qDebug() << "PeerConnectionHandler::OnDataChannel() - " << QString::fromStdString(data_channel->label());
-    data_channel->RegisterObserver(this);
-}
-
-void PeerConnectionHandler::OnRenegotiationNeeded()
-{
-
-}
-
-void PeerConnectionHandler::OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState new_state)
-{
-
-}
-
-void PeerConnectionHandler::OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState new_state)
-{
-
-}
-
-void PeerConnectionHandler::OnIceCandidate(const webrtc::IceCandidateInterface* candidate)
-{
-    std::string l;
-    candidate->ToString(&l);
-    qDebug() << "PeerConnectionHandler::OnIceCandidate()" << QString::fromStdString(l);
-}
-
-void PeerConnectionHandler::OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates)
-{
-
-}
-
-void PeerConnectionHandler::OnIceConnectionReceivingChange(bool receiving)
-{
-
-}
-
-void PeerConnectionHandler::OnAddTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver, const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams)
-{
-
-}
-
-void PeerConnectionHandler::OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver)
-{
-
-}
-
-void PeerConnectionHandler::OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver)
-{
-
-}
-
-void PeerConnectionHandler::OnInterestingUsage(int usage_pattern)
-{
-
-}
-
-void PeerConnectionHandler::OnSuccess(webrtc::SessionDescriptionInterface* desc)
-{
-    qDebug() << "PeerConnectionHandler::OnSuccess() - Create Session Description WebRTC: " << QString::fromStdString(desc->type());
-    if (QString::fromStdString(desc->type()) == "answer"){
-        // 5. Provide the local answer to the new PeerConnection by calling
-        // SetLocalDescription with the answer.
-        remote_peer_connection->SetLocalDescription(this, desc);
-        std::string out;
-        desc->ToString(&out);
-        client_sockets.last()->sendTextMessage(QString::fromStdString(out));
-    }
-}
-
-void PeerConnectionHandler::OnSuccess()
-{
-    //qDebug() << "PeerConnectionHandler::OnSuccess() - Set Session Description WebRTC";
-    remote_peer_connection->CreateAnswer(this, webrtc::PeerConnectionInterface::RTCOfferAnswerOptions());
-}
-
-void PeerConnectionHandler::OnFailure(webrtc::RTCError error)
-{
-    qDebug() << "PeerConnectionHandler::OnFailure() - Session Description WebRTC Error: " << error.message();
-}
-
-void PeerConnectionHandler::OnFailure(const std::string& error)
-{
-    qDebug() << "PeerConnectionHandler::OnFailure() - Session Description WebRTC Error: " << QString::fromStdString(error);
-}
-
-void PeerConnectionHandler::AddRef() const
-{
-
-}
-
-rtc::RefCountReleaseStatus PeerConnectionHandler::Release() const
-{
-
-}
-
-void PeerConnectionHandler::OnStateChange()
-{
-    qDebug() << "STATE CHANGE";
-}
-
-void PeerConnectionHandler::OnMessage(const webrtc::DataBuffer& buffer)
-{
-    qDebug() << "RECEIVED MESSAGE";
-}
-
-void PeerConnectionHandler::OnBufferedAmountChange(uint64_t previous_amount)
-{
-
 }

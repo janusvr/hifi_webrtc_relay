@@ -11,31 +11,16 @@
 #endif //Q_OS_WIN
 
 #ifdef Q_OS_MAC
+#define SPDLOG_DISABLED
 #include <sys/socket.h>
 #include <netinet/in.h>
-#define WEBRTC_MAC 1
-#define WEBRTC_POSIX 1
 #endif //Q_OS_MAC
 
 #include "portableendian.h"
 
-#include <pc/peerconnection.h>
-#include <api/datachannelinterface.h>
-#include <api/jsep.h>
-#include <rtc_base/refcount.h>
-#include <rtc_base/openssladapter.h>
-#include <api/audio_codecs/builtin_audio_decoder_factory.h>
-#include <api/audio_codecs/builtin_audio_encoder_factory.h>
-#include <media/engine/internaldecoderfactory.h>
-#include <media/engine/internalencoderfactory.h>
-#include <media/engine/webrtcmediaengine.h>
-#include "modules/audio_processing/include/audio_processing.h"
+#include <rtcdcpp/PeerConnection.hpp>
 
-class PeerConnectionHandler : public QObject,
-    public webrtc::DataChannelObserver,
-    public webrtc::CreateSessionDescriptionObserver,
-    public webrtc::SetSessionDescriptionObserver,
-    public webrtc::PeerConnectionObserver
+class PeerConnectionHandler : public QObject
 {
     Q_OBJECT
 
@@ -43,36 +28,31 @@ public:
     PeerConnectionHandler();
     ~PeerConnectionHandler();
 
-    static void Initialize();
+    void SetDomainServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {domain_server_dc = d;}
+    void SetAudioMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {audio_mixer_dc = d;}
+    void SetAvatarMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {avatar_mixer_dc = d;}
+    void SetMessagesMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {messages_mixer_dc = d;}
+    void SetAssetServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {asset_server_dc = d;}
+    void SetEntityServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_server_dc = d;}
+    void SetEntityScriptServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_script_server_dc = d;}
 
-    void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState new_state);
-    void OnAddStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream);
-    void OnRemoveStream(rtc::scoped_refptr<webrtc::MediaStreamInterface> stream);
-    void OnDataChannel(rtc::scoped_refptr<webrtc::DataChannelInterface> data_channel);
-    void OnRenegotiationNeeded();
-    void OnIceConnectionChange(webrtc::PeerConnectionInterface::IceConnectionState new_state);
-    void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState new_state);
-    void OnIceCandidate(const webrtc::IceCandidateInterface* candidate);
-    void OnIceCandidatesRemoved(const std::vector<cricket::Candidate>& candidates);
-    void OnIceConnectionReceivingChange(bool receiving);
-    void OnAddTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver, const std::vector<rtc::scoped_refptr<webrtc::MediaStreamInterface>>& streams);
-    void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver);
-    void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver);
-    void OnInterestingUsage(int usage_pattern);
+    void SendDomainServerMessage(QString message) {domain_server_dc->SendString(message.toStdString());}
+    void SendAudioMixerMessage(QString message) {audio_mixer_dc->SendString(message.toStdString());}
+    void SendAvatarMixerMessage(QString message) {avatar_mixer_dc->SendString(message.toStdString());}
+    void SendMessagesMixerMessage(QString message) {messages_mixer_dc->SendString(message.toStdString());}
+    void SendAssetServerMessage(QString message) {asset_server_dc->SendString(message.toStdString());}
+    void SendEntityServerMessage(QString message) {entity_server_dc->SendString(message.toStdString());}
+    void SendEntityScriptServerMessage(QString message) {entity_script_server_dc->SendString(message.toStdString());}
 
-    void OnSuccess();
+    void SendDomainServerMessage(QByteArray message) {domain_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendAudioMixerMessage(QByteArray message) {audio_mixer_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendAvatarMixerMessage(QByteArray message) {avatar_mixer_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendMessagesMixerMessage(QByteArray message) {messages_mixer_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendAssetServerMessage(QByteArray message) {asset_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendEntityServerMessage(QByteArray message) {entity_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendEntityScriptServerMessage(QByteArray message) {entity_script_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
 
-    void OnSuccess(webrtc::SessionDescriptionInterface* desc);
-    void OnFailure(webrtc::RTCError error);
-
-    void OnFailure(const std::string& error);
-
-    void AddRef() const;
-    rtc::RefCountReleaseStatus Release() const;
-
-    void OnStateChange();
-    void OnMessage(const webrtc::DataBuffer& buffer);
-    void OnBufferedAmountChange(uint64_t previous_amount);
+    QList<QWebSocket *> GetClientSockets() {return client_sockets;}
 
 public Q_SLOTS:
     void Connect();
@@ -80,28 +60,23 @@ public Q_SLOTS:
     void ServerConnected();
     void ServerDisconnected();
     void ClientMessageReceived(const QString &message);
-    void ClientBinaryMessageReceived(const QByteArray &message);
     void ClientDisconnected();
-    void MessageReceived(const QString &message);
-    void BinaryMessageReceived(const QByteArray &message);
 
 private:
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> remote_peer_connection;
-
-    static webrtc::DataChannelInit * data_channel_init;
-    static rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> peer_connection_factory;
+    std::shared_ptr<rtcdcpp::PeerConnection> remote_peer_connection;
 
     QWebSocketServer * signaling_server;
-    QWebSocket * signaling_socket;
-    QWebSocket * server_side_signaling_socket;
+
+    std::shared_ptr<rtcdcpp::DataChannel> domain_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> audio_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> avatar_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> messages_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> entity_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> entity_script_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> asset_server_dc;
 
     QList<QWebSocket *> client_sockets;
 
-    static rtc::Thread * networking_thread;
-    static rtc::Thread * worker_thread;
-    static rtc::Thread * signaling_thread;
-
-    static std::unique_ptr<rtc::RTCCertificateGeneratorInterface> certificate_generator;
 };
 
 #endif // PEERCONNECTIONHANDLER_H

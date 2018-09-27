@@ -1,5 +1,7 @@
 #include "task.h"
 
+//TODO: handle multiple clients
+
 Task::Task(QObject * parent) :
     QObject(parent),
     client_address(QHostAddress::LocalHost),
@@ -29,8 +31,6 @@ Task::Task(QObject * parent) :
     messages_mixer = nullptr;
     entity_server = nullptr;
     entity_script_server = nullptr;
-
-    PeerConnectionHandler::Initialize();
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])

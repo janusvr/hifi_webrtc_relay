@@ -36,6 +36,10 @@ HEADERS += \
 
 unix:macx:LIBS += -L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto
 unix:macx:INCLUDEPATH += "/usr/local/Cellar/openssl/1.0.2o_1/include"
+
+INCLUDEPATH +="./resources/librtcdcpp/include"
+unix:macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/mac" -lrtcdcpp
+
 unix:macx:OPENSSL_LIBS='-L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto'
 unix:macx:LIBS += -framework IOKit -framework CoreFoundation -framework Foundation -framework CoreAudio -framework CoreServices \
     -framework AudioUnit -framework AudioToolbox -framework CoreGraphics
@@ -44,14 +48,6 @@ INCLUDEPATH +="./resources/openssl/include"
 win32:LIBS += -L"$$PWD/resources/openssl/x64/lib"
 win32:LIBS += -llibcrypto -llibssl
 win32:OPENSSL_LIBS ='-L"$$PWD/resources/openssl/x64/lib" -llibcrypto -llibssl'
-
-INCLUDEPATH +="/Users/mccrae/Desktop/firebox/webrtc/src/third_party/abseil-cpp"
-INCLUDEPATH +="/Users/mccrae/Desktop/firebox/webrtc/src"
-macx:LIBS += -L"/Users/mccrae/Desktop/firebox/webrtc/src/out/Default/obj"
-macx:LIBS += -lwebrtc
-#INCLUDEPATH +="./resources/webrtc/include"
-#win32:LIBS += -L"$$PWD/resources/webrtc/lib/x64/Release"
-#win32:LIBS += -lwebrtc
 
 win32:LIBS += -L"$$PWD/resources/windows"
 win32:LIBS += -lws2_32 -lAdvAPI32

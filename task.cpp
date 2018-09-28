@@ -4,17 +4,17 @@
 
 Task::Task(QObject * parent) :
     QObject(parent),
-    client_address(QHostAddress::LocalHost),
-    client_port(4444),
     stun_server_hostname("stun.highfidelity.io"),
     stun_server_port(3478),
     ice_server_hostname("ice.highfidelity.com"), //"dev-ice.highfidelity.com";
-    ice_server_port(7337)
+    ice_server_port(7337),
+    signal_server_port(8888)
 {
+    client_sockets = QList<QWebSocket *>();
+
     use_custom_ice_server = false;
     finished_domain_id_request = false;
     started_domain_connect = false;
-    ice_client_id = QUuid::createUuid();
 
     owner_type = NodeType::Agent;
     node_types_of_interest = NodeSet() << NodeType::AudioMixer << NodeType::AvatarMixer << NodeType::EntityServer << NodeType::AssetServer << NodeType::MessagesMixer << NodeType::EntityScriptServer;
@@ -31,18 +31,36 @@ Task::Task(QObject * parent) :
     messages_mixer = nullptr;
     entity_server = nullptr;
     entity_script_server = nullptr;
+    domain_server_dc = nullptr;
+    audio_mixer_dc = nullptr;
+    avatar_mixer_dc = nullptr;
+    messages_mixer_dc = nullptr;
+    asset_server_dc = nullptr;
+    entity_server_dc = nullptr;
+    entity_script_server_dc = nullptr;
+
+    signaling_server = new QWebSocketServer(QStringLiteral("Signaling Server"), QWebSocketServer::NonSecureMode, this);
+
+    if (signaling_server->listen(QHostAddress::LocalHost, signal_server_port)) {
+        connect(signaling_server, &QWebSocketServer::newConnection, this, &Task::Connect);
+        connect(signaling_server, &QWebSocketServer::closed, this, &Task::Disconnect);
+    }
+}
+
+Task::~Task()
+{
+    for (int i = 0; i < client_sockets.size(); i++)
+    {
+        client_sockets[i]->close();
+    }
+    signaling_server->close();
 }
 
 void Task::processCommandLineArguments(int argc, char * argv[])
 {
     for (int i=1; i<argc; ++i) {
         const QString s = QString(argv[i]).toLower();
-        if (s.right(7) == "-client" && i+2 < argc) {
-            client_address = QHostAddress(QString(argv[i+1]));
-            client_port = QString(argv[i+2]).toInt();
-            i+=2;
-        }
-        else if (s.right(7) == "-iceserver" && i+2 < argc) {
+        if (s.right(7) == "-iceserver" && i+2 < argc) {
             use_custom_ice_server = true;
             ice_server_address = QHostAddress(QString(argv[i+1]));
             ice_server_port = QString(argv[i+2]).toInt();
@@ -59,7 +77,7 @@ void Task::processCommandLineArguments(int argc, char * argv[])
             i+=2;
         }
         else if (s.right(5) == "-help") {
-            qDebug() << "Usage: \n hifi_webrtc_relay [-client address port] [-server address port] [-help]";
+            qDebug() << "Usage: \n hifi_webrtc_relay [-iceserver address port] [-domain placename] [-help]";
 
             // Just exit after displaying this help message
             exit(0);
@@ -69,8 +87,14 @@ void Task::processCommandLineArguments(int argc, char * argv[])
 
 void Task::run()
 {
-    peer_connection = new PeerConnectionHandler();
+    qDebug() << "Task::run() - Started HiFi WebRTC Relay";
+    connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(HifiConnect()));
+    // Application runs indefinitely (until terminated - e.g. Ctrl+C)
+    //    Q_EMIT finished();
+}
 
+void Task::HifiConnect()
+{
     // Domain ID lookup
     QNetworkAccessManager * nam = new QNetworkAccessManager(this);
     QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
@@ -78,34 +102,7 @@ void Task::run()
     domain_reply = nam->get(request);
     connect(domain_reply, SIGNAL(finished()), this, SLOT(domainRequestFinished()));
 
-    //setup client socket for receiving
-    client_socket = new QUdpSocket(this);
-    client_socket->bind(QHostAddress::LocalHost, 5555);
-    client_socket->connectToHost(client_address, client_port, QIODevice::ReadWrite);
-    client_socket->waitForConnected();
-
-    connect(client_socket, SIGNAL(readyRead()), this, SLOT(relayToServer()));
-    Node::setClientSocket(client_socket);
-
     startStun();
-
-    // Application runs indefinitely (until terminated - e.g. Ctrl+C)
-    //    Q_EMIT finished();
-}
-
-void Task::relayToServer()
-{
-    //Event loop calls this function each time client socket is ready for reading
-    qDebug() << "Task::relayToServer()";
-
-    while (client_socket->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(client_socket->pendingDatagramSize());
-        QHostAddress sender;
-        quint16 senderPort;
-
-        client_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-    }
 }
 
 void Task::domainRequestFinished()
@@ -198,6 +195,28 @@ void Task::startDomainIcePing()
 
     hifi_socket->connectToHost(domain_public_address, domain_public_port, QIODevice::ReadWrite);
     hifi_socket->waitForConnected();
+
+    // Register Domain Server DC callbacks here
+    std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+        QString m = QString::fromStdString(message);
+        qDebug() << "Task::onMessage() - Domain Server" << m;
+        this->SendDomainServerMessage(m);
+    };
+    domain_server_dc->SetOnStringMsgCallback(onStringMessageCallback);
+
+    std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+        QByteArray m = QByteArray((char *) message->Data(), message->Length());
+        qDebug() << "Task::onMessage() - Domain Server" << m;
+        this->SendDomainServerMessage(m);
+    };
+    domain_server_dc->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+    std::function<void()> onClosed = [this]() {
+        qDebug() << "Task::onClosed() - Domain Server data channel closed";
+        this->SetDomainServerDC(nullptr);
+    };
+    domain_server_dc->SetOnClosedCallback(onClosed);
+    this->SendDomainServerDCMessage(QString("test_message")); //TODO: remove this test message
 
     hifi_ping_timer->start();
 }
@@ -404,6 +423,9 @@ void Task::parseDomainResponse()
             while (packetStream.device()->pos() < domainResponsePacket.get()->getDataSize() - domainResponsePacket.get()->totalHeaderSize()) {
                 parseNodeFromPacketStream(packetStream);
             }
+
+            // Relay domain list packet over to client
+            SendDomainServerDCMessage(datagram);
         }
         else if (domainResponsePacket->getType() == PacketType::DomainConnectionDenied) {
             uint8_t reasonCode;
@@ -419,6 +441,10 @@ void Task::parseDomainResponse()
             QString reason = QString::fromUtf8(utfReason.constData(), reasonSize);*/
 
             qDebug() << "Task::parseDomainResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
+        }
+        else {
+            // Send any other types of packets from the domain server to the client
+            SendDomainServerDCMessage(datagram);
         }
     }
     return;
@@ -537,31 +563,37 @@ void Task::parseNodeFromPacketStream(QDataStream& packetStream)
         case NodeType::AssetServer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering asset server" << nodePublicAddress << nodePublicPort;
             asset_server = node;
+            asset_server->setDataChannel(asset_server_dc);
             break;
         }
         case NodeType::AudioMixer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering audio mixer" << nodePublicAddress << nodePublicPort;
             audio_mixer = node;
+            audio_mixer->setDataChannel(audio_mixer_dc);
             break;
         }
         case NodeType::AvatarMixer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering avatar mixer" << nodePublicAddress << nodePublicPort;
             avatar_mixer = node;
+            avatar_mixer->setDataChannel(avatar_mixer_dc);
             break;
         }
         case NodeType::MessagesMixer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering messages mixer" << nodePublicAddress << nodePublicPort;
             messages_mixer = node;
+            messages_mixer->setDataChannel(messages_mixer_dc);
             break;
         }
         case NodeType::EntityServer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering entity server" << nodePublicAddress << nodePublicPort;
             entity_server = node;
+            entity_server->setDataChannel(entity_server_dc);
             break;
         }
         case NodeType::EntityScriptServer : {
             qDebug() << "Task::parseNodeFromPacketStream() - Registering entity script server" << nodePublicAddress << nodePublicPort;
             entity_script_server = node;
+            entity_script_server->setDataChannel(entity_script_server_dc);
             break;
         }
         default: {
@@ -683,4 +715,128 @@ void Task::sendIcePingReply(Packet * icePing)
     //qDebug() << packetSize << icePingReply->getDataSize();
 
     hifi_socket->write(icePingReply->getData(), icePingReply->getDataSize());
+}
+
+void Task::Connect()
+{
+    QWebSocket *s = signaling_server->nextPendingConnection();
+
+    //Loop through client sockets, if different peerAddress and peerPort then add the new socket
+    qDebug() << "Task::Connect() - New client" << s << s->peerAddress() << s->peerPort();
+    connect(s, &QWebSocket::textMessageReceived, this, &Task::ClientMessageReceived);
+    connect(s, &QWebSocket::disconnected, this, &Task::ClientDisconnected);
+
+    client_sockets.push_back(s);
+    ice_client_id = QUuid::createUuid();
+
+    s->sendTextMessage("connected");
+}
+
+void Task::Disconnect()
+{
+
+}
+
+void Task::ServerConnected()
+{
+    //qDebug() << "Task::ServerConnected()";
+}
+
+void Task::ServerDisconnected()
+{
+    //qDebug() << "Task::ServerDisconnected()";
+}
+
+void Task::ClientMessageReceived(const QString &message)
+{
+    //qDebug() << "Task::ClientMessageReceived() - " << message;
+    QWebSocket *client = qobject_cast<QWebSocket *>(sender());
+
+    QJsonDocument doc;
+    doc = QJsonDocument::fromJson(message.toLatin1());
+    QJsonObject obj = doc.object();
+    QString type = obj["type"].toString();
+    if (type == "offer")
+    {
+        rtcdcpp::RTCConfiguration config;
+        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun3.l.google.com", 19302});
+
+        std::function<void(rtcdcpp::PeerConnection::IceCandidate)> onLocalIceCandidate = [this,client](rtcdcpp::PeerConnection::IceCandidate candidate) {
+            QJsonObject candidateObject;
+            candidateObject.insert("type", QJsonValue::fromVariant("candidate"));
+            QJsonObject candidateObject2;
+            candidateObject2.insert("candidate", QJsonValue::fromVariant(QString::fromStdString(candidate.candidate)));
+            candidateObject2.insert("sdpMid", QJsonValue::fromVariant(QString::fromStdString(candidate.sdpMid)));
+            candidateObject2.insert("sdpMLineIndex", QJsonValue::fromVariant(candidate.sdpMLineIndex));
+            candidateObject.insert("candidate", candidateObject2);
+            QJsonDocument candidateDoc(candidateObject);
+
+            //qDebug() << "candidate: " << candidateDoc.toJson();
+            client->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
+        };
+
+        std::function<void(std::shared_ptr<rtcdcpp::DataChannel> channel)> onDataChannel = [this](std::shared_ptr<rtcdcpp::DataChannel> channel) {
+            //qDebug() << "datachannel" << QString::fromStdString(channel->GetLabel());
+            QString label = QString::fromStdString(channel->GetLabel());
+            if (label == "domain_server_dc") {
+                qDebug() << "Task::onDataChannel() - Registering domain server data channel";
+                this->SetDomainServerDC(channel);
+            }
+            else if (label == "audio_mixer_dc") {
+                qDebug() << "Task::onDataChannel() - Registering audio mixer data channel";
+                this->SetAudioMixerDC(channel);
+            }
+            else if (label == "avatar_mixer_dc") {
+                qDebug() << "Task::onDataChannel() - Registering avatar mixer data channel";
+                this->SetAvatarMixerDC(channel);
+            }
+            else if (label == "entity_server_dc") {
+                qDebug() << "Task::onDataChannel() - Registering entity server data channel";
+                this->SetEntityServerDC(channel);
+            }
+            else if (label == "entity_script_server_dc") {
+                qDebug() << "Task::onDataChannel() - Registering entity script server data channel";
+                this->SetEntityScriptServerDC(channel);
+            }
+            else if (label == "messages_mixer_dc") {
+                qDebug() << "Task::onDataChannel() - Registering messages mixer data channel";
+                this->SetMessagesMixerDC(channel);
+            }
+            else if (label == "asset_server_dc") {
+                qDebug() << "Task::onDataChannel() - Registering asset server data channel";
+                this->SetAssetServerDC(channel);
+            }
+
+            if (this->DataChannelsReady()) {
+                qDebug() << "Task::WebRTCConnectionReady() - Data channels registered";
+                Q_EMIT WebRTCConnectionReady();
+            }
+        };
+
+        remote_peer_connection = std::make_shared<rtcdcpp::PeerConnection>(config, onLocalIceCandidate, onDataChannel);
+
+        remote_peer_connection->ParseOffer(obj["sdp"].toString().toStdString());
+        QJsonObject answerObject;
+        answerObject.insert("type", QJsonValue::fromVariant("answer"));
+        answerObject.insert("sdp", QJsonValue::fromVariant(QString::fromStdString(remote_peer_connection->GenerateAnswer())));
+        QJsonDocument answerDoc(answerObject);
+
+        //qDebug() << "Sending Answer: " << answerDoc.toJson();
+        client->sendTextMessage(QString::fromStdString(answerDoc.toJson().toStdString()));
+    }
+    else if (type == "candidate")
+    {
+        //qDebug() << "remote candidate";
+        QJsonObject c = obj["candidate"].toObject();
+        remote_peer_connection->SetRemoteIceCandidate("a=" + c["candidate"].toString().toStdString());
+    }
+}
+
+void Task::ClientDisconnected()
+{
+    QWebSocket *s = qobject_cast<QWebSocket *>(sender());
+    if (s) {
+        client_sockets.removeAll(s);
+        s->deleteLater();
+    }
 }

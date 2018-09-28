@@ -2,6 +2,7 @@
 #define TASK_H
 
 #include <QObject>
+#include <QtWebSockets>
 #include <QDebug>
 #include <QtNetwork>
 #include <QString>
@@ -10,15 +11,17 @@
 #include <QTimer>
 #include <QUuid>
 
+#define SPDLOG_DISABLED
+
 #ifdef Q_OS_WIN
 #include <winsock2.h>
 #include <WS2tcpip.h>
 #endif //Q_OS_WIN
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_UNIX
 #include <sys/socket.h>
 #include <netinet/in.h>
-#endif //Q_OS_MAC
+#endif //Q_OS_UNIX
 
 #include "packet.h"
 #include "node.h"
@@ -26,7 +29,7 @@
 
 #include "portableendian.h"
 
-#include "peerconnectionhandler.h"
+#include <rtcdcpp/PeerConnection.hpp>
 
 class Task : public QObject
 {
@@ -35,6 +38,8 @@ class Task : public QObject
 public:
 
     Task(QObject *parent = 0);
+    ~Task();
+
     void processCommandLineArguments(int argc, char * argv[]);
     void handleLookupResult(const QHostInfo& hostInfo, QHostAddress * addr);
 
@@ -44,9 +49,29 @@ public:
 
     void parseNodeFromPacketStream(QDataStream& packetStream);
 
+    void SetDomainServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {domain_server_dc = d;}
+    void SetAudioMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {audio_mixer_dc = d;}
+    void SetAvatarMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {avatar_mixer_dc = d;}
+    void SetMessagesMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {messages_mixer_dc = d;}
+    void SetAssetServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {asset_server_dc = d;}
+    void SetEntityServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_server_dc = d;}
+    void SetEntityScriptServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_script_server_dc = d;}
+
+    bool DataChannelsReady(){
+        return (domain_server_dc && audio_mixer_dc && avatar_mixer_dc && messages_mixer_dc && entity_server_dc && entity_script_server_dc && asset_server_dc);
+    }
+
+    void SendDomainServerMessage(QString message) {hifi_socket->write(message.toLatin1());}
+    void SendDomainServerMessage(QByteArray message) {hifi_socket->write(message);}
+
+    void SendDomainServerDCMessage(QString message) {domain_server_dc->SendString(message.toStdString());}
+    void SendDomainServerDCMessage(QByteArray message) {domain_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+
+    QList<QWebSocket *> GetClientSockets() {return client_sockets;}
+
 public Q_SLOTS:
 
-    void relayToServer();
+    void HifiConnect();
 
     void run();
     void startIce();
@@ -64,8 +89,16 @@ public Q_SLOTS:
 
     void domainRequestFinished();
 
+    void Connect();
+    void Disconnect();
+    void ServerConnected();
+    void ServerDisconnected();
+    void ClientMessageReceived(const QString &message);
+    void ClientDisconnected();
+
 Q_SIGNALS:
 
+    void WebRTCConnectionReady();
     void finished();
 
 private:
@@ -74,10 +107,6 @@ private:
         QString uuidStringNoBraces = uuid.toString().mid(1, uuid.toString().length() - 2);
         return uuidStringNoBraces;
     }
-
-    QUdpSocket * client_socket;
-    QHostAddress client_address;
-    quint16 client_port;
 
     QUdpSocket * hifi_socket;
     QTimer * hifi_ping_timer;
@@ -94,6 +123,8 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
+
+    quint16 signal_server_port;
 
     QUuid ice_client_id;
 
@@ -133,6 +164,18 @@ private:
     Node * entity_server;
     Node * entity_script_server;
 
-    PeerConnectionHandler * peer_connection;
+    std::shared_ptr<rtcdcpp::PeerConnection> remote_peer_connection;
+
+    QWebSocketServer * signaling_server;
+
+    std::shared_ptr<rtcdcpp::DataChannel> domain_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> audio_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> avatar_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> messages_mixer_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> entity_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> entity_script_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> asset_server_dc;
+
+    QList<QWebSocket *> client_sockets;
 };
 #endif // TASK_H

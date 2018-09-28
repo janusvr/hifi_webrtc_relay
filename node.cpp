@@ -1,14 +1,12 @@
 #include "node.h"
 
-QUdpSocket * Node::client_socket = nullptr;
-
 Node::Node()
 {
     connected = false;
     authenticate_hash = nullptr;
-    num_requests = 0;
-    started_negotiating_audio_format = false;
-    negotiated_audio_format = false;
+    //num_requests = 0;
+    //started_negotiating_audio_format = false;
+    //negotiated_audio_format = false;
 }
 
 Node::~Node()
@@ -72,11 +70,6 @@ void Node::setPermissions(Permissions p)
     permissions = p;
 }
 
-void Node::setClientSocket(QUdpSocket * c)
-{
-    client_socket = c;
-}
-
 void Node::activatePublicSocket(QHostAddress l, quint16 p)
 {
     node_socket = new QUdpSocket(this);
@@ -86,10 +79,10 @@ void Node::activatePublicSocket(QHostAddress l, quint16 p)
 
     connect(node_socket, SIGNAL(readyRead()), this, SLOT(relayToClient()));
 
-    startPing();
+    //startPing();
 }
 
-void Node::startPing()
+/*void Node::startPing()
 {
     // start the ping timer for this node
     ping_timer = new QTimer { this };
@@ -171,7 +164,7 @@ void Node::sendNegotiateAudioFormat()
     negotiateFormatPacket->writeVerificationHash(authenticate_hash.get());
 
     node_socket->write(negotiateFormatPacket->getData(), negotiateFormatPacket->getDataSize());
-}
+}*/
 
 QUdpSocket * Node::getSocket()
 {
@@ -187,7 +180,7 @@ void Node::relayToClient()
         quint16 senderPort;
 
         node_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        std::unique_ptr<Packet> responsePacket = Packet::fromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, senderPort);
+        /*std::unique_ptr<Packet> responsePacket = Packet::fromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, senderPort);
         //qDebug() << "Node::relayToClient() - " << (char) node_type << (int) responsePacket->getType() << sender << senderPort;
         if (responsePacket->getType() == PacketType::Ping) {
             //qDebug() << "Node::relayToClient() - Send ping reply";
@@ -225,9 +218,40 @@ void Node::relayToClient()
                 startNegotiateAudioFormat();
             }
         }
-        else if (connected){
+        else if (connected){*/
             qDebug() << "Node::relayToClient() - Relay to client";
-            client_socket->write(datagram.data(),datagram.size());
-        }
+            SendMessageToClient(datagram);
+        //}
     }
+}
+
+void Node::setDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
+{
+    if (channel == nullptr) {
+        data_channel = channel;
+        return;
+    }
+
+    std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+        QString m = QString::fromStdString(message);
+        qDebug() << "Node::onMessage() - " << (char) this->getNodeType() << m;
+        this->SendMessageToServer(m);
+    };
+    channel->SetOnStringMsgCallback(onStringMessageCallback);
+
+    std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+        QByteArray m = QByteArray((char *) message->Data(), message->Length());
+        qDebug() << "Node::onMessage() - " << (char) this->getNodeType() << m;
+        this->SendMessageToServer(m);
+    };
+    channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+    std::function<void()> onClosed = [this]() {
+        qDebug() << "Node::onClosed() - Data channel closed" << (char) node_type;
+        this->setDataChannel(nullptr);
+    };
+    channel->SetOnClosedCallback(onClosed);
+
+    data_channel = channel;
+    SendMessageToClient(QString("node_message")); // TODO: remove this test message
 }

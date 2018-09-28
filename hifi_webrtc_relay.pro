@@ -22,8 +22,7 @@ SOURCES += main.cpp \
     packet.cpp \
     utils.cpp \
     node.cpp \
-    hmacauth.cpp \
-    peerconnectionhandler.cpp
+    hmacauth.cpp
 
 HEADERS += \
     task.h \
@@ -31,8 +30,7 @@ HEADERS += \
     utils.h \
     node.h \
     hmacauth.h \
-    portableendian.h \
-    peerconnectionhandler.h
+    portableendian.h
 
 unix:macx:LIBS += -L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto
 unix:macx:INCLUDEPATH += "/usr/local/Cellar/openssl/1.0.2o_1/include"

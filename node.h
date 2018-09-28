@@ -9,6 +9,10 @@
 #include "packet.h"
 #include "utils.h"
 
+#define SPDLOG_DISABLED
+
+#include <rtcdcpp/PeerConnection.hpp>
+
 typedef quint8 NodeType_t;
 
 namespace NodeType {
@@ -31,7 +35,6 @@ namespace NodeType {
     bool isDownstream(NodeType_t nodeType);
     NodeType_t upstreamType(NodeType_t primaryType);
     NodeType_t downstreamType(NodeType_t primaryType);
-
 
     NodeType_t fromString(QString type);
 }
@@ -61,6 +64,8 @@ public:
     Node();
     ~Node();
 
+    NodeType_t getNodeType() {return node_type;}
+
     void setNodeID(QUuid n);
     void setNodeType(NodeType_t n);
     void setPublicAddress(QHostAddress a, quint16 p);
@@ -71,18 +76,24 @@ public:
     void setConnectionSecret(QUuid c);
     void setPermissions(Permissions p);
 
-    static void setClientSocket(QUdpSocket * c);
+    void setDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
 
     void activatePublicSocket(QHostAddress l, quint16 p);
 
-    void startPing();
-    void startNegotiateAudioFormat();
+    //void startPing();
+    //void startNegotiateAudioFormat();
 
     QUdpSocket * getSocket();
 
+    void SendMessageToServer(QString message) {node_socket->write(message.toLatin1());}
+    void SendMessageToServer(QByteArray message) {node_socket->write(message);}
+
+    void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
+    void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
+
 public Q_SLOTS:
-    void sendNegotiateAudioFormat();
-    void sendPing();
+    //void sendNegotiateAudioFormat();
+    //void sendPing();
     void relayToClient();
 
 private:
@@ -104,14 +115,15 @@ private:
     std::unique_ptr<HMACAuth> authenticate_hash;
 
     QUdpSocket * node_socket;
-    static QUdpSocket * client_socket;
 
-    QTimer * ping_timer;
-    QTimer * hifi_response_timer;
+    //QTimer * ping_timer;
+    //QTimer * hifi_response_timer;
 
-    bool started_negotiating_audio_format;
-    bool negotiated_audio_format;
-    int num_requests;
+    //bool started_negotiating_audio_format;
+    //bool negotiated_audio_format;
+    //int num_requests;
+
+    std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 };
 
 #endif // NODE_H

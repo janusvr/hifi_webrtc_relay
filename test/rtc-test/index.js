@@ -1,4 +1,4 @@
-var signalServer = new WebSocket('ws://localhost:8142');
+var signalServer = new WebSocket('ws://localhost:8888');
 var domain_sendChannel;
 var audio_sendChannel;
 var avatar_sendChannel;

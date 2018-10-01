@@ -4,9 +4,9 @@ Node::Node()
 {
     connected = false;
     authenticate_hash = nullptr;
-    //num_requests = 0;
-    //started_negotiating_audio_format = false;
-    //negotiated_audio_format = false;
+    num_requests = 0;
+    started_negotiating_audio_format = false;
+    negotiated_audio_format = false;
 }
 
 Node::~Node()
@@ -14,44 +14,49 @@ Node::~Node()
 
 }
 
-void Node::setNodeID(QUuid n)
+void Node::Disconnect()
+{
+    Q_EMIT Disconnected();
+}
+
+void Node::SetNodeID(QUuid n)
 {
     node_id = n;
 }
 
-void Node::setNodeType(NodeType_t n)
+void Node::SetNodeType(NodeType_t n)
 {
     node_type = n;
 }
 
-void Node::setPublicAddress(QHostAddress a, quint16 p)
+void Node::SetPublicAddress(QHostAddress a, quint16 p)
 {
     public_address = a;
     public_port = p;
 }
 
-void Node::setLocalAddress(QHostAddress a, quint16 p)
+void Node::SetLocalAddress(QHostAddress a, quint16 p)
 {
     local_address = a;
     local_port = p;
 }
 
-void Node::setSessionLocalID(quint16 s)
+void Node::SetSessionLocalID(quint16 s)
 {
     session_local_id = s;
 }
 
-void Node::setDomainSessionLocalID(quint16 s)
+void Node::SetDomainSessionLocalID(quint16 s)
 {
     domain_session_local_id = s;
 }
 
-void Node::setIsReplicated(bool b)
+void Node::SetIsReplicated(bool b)
 {
     is_replicated = b;
 }
 
-void Node::setConnectionSecret(QUuid c)
+void Node::SetConnectionSecret(QUuid c)
 {
     if (connection_secret == c) {
         return;
@@ -62,170 +67,181 @@ void Node::setConnectionSecret(QUuid c)
     }
 
     connection_secret = c;
-    authenticate_hash->setKey(c);
+    authenticate_hash->SetKey(c);
 }
 
-void Node::setPermissions(Permissions p)
+void Node::SetPermissions(Permissions p)
 {
     permissions = p;
 }
 
-void Node::activatePublicSocket(QHostAddress l, quint16 p)
+void Node::ActivatePublicSocket(QHostAddress l, quint16 p)
 {
     node_socket = new QUdpSocket(this);
+    connect(node_socket, SIGNAL(disconnected()), this, SLOT(Disconnect()));
     node_socket->bind(l,p,QAbstractSocket::ShareAddress);
     node_socket->connectToHost(public_address, public_port, QIODevice::ReadWrite);
     node_socket->waitForConnected();
 
-    connect(node_socket, SIGNAL(readyRead()), this, SLOT(relayToClient()));
+    connect(node_socket, SIGNAL(readyRead()), this, SLOT(RelayToClient()));
 
-    //startPing();
+    StartPing();
 }
 
-/*void Node::startPing()
+void Node::StartPing()
 {
     // start the ping timer for this node
     ping_timer = new QTimer { this };
-    connect(ping_timer, &QTimer::timeout, this, &Node::sendPing);
+    connect(ping_timer, &QTimer::timeout, this, &Node::SendPing);
     ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
     ping_timer->start();
 }
 
-void Node::startNegotiateAudioFormat()
+void Node::StartNegotiateAudioFormat()
 {
     // start the ping timer for this node
     started_negotiating_audio_format = true;
     num_requests = 0;
 
     hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &Node::sendNegotiateAudioFormat);
+    connect(hifi_response_timer, &QTimer::timeout, this, &Node::SendNegotiateAudioFormat);
     hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
     hifi_response_timer->start();
 }
 
-void Node::sendPing()
+void Node::SendPing()
 {
+
+    if (num_requests == 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
+    {
+        qDebug() << "HifiConnection::SendDomainIcePing() - Stopping domain ice ping requests to" << Utils::GetDomainPlaceName();
+
+        ping_timer->stop();
+        ping_timer->deleteLater();
+        return;
+    }
+
     if (connected)
     {
-        qDebug() << "Node::sendPing() - Stopping pings to node: " << (char) node_type;
+        qDebug() << "Node::SendPing() - Stopping pings to node: " << (char) node_type;
         ping_timer->stop();
         ping_timer->deleteLater();
 
         return;
     }
+    else
+    {
+        ++num_requests;
+    }
 
-    quint8 pingType = 2;
+    quint8 ping_type = 2;
     quint64 timestamp = Utils::GetTimestamp(); // in usec
     int64_t connection_id = 0;
 
-    int packetSize = sizeof(quint8) + sizeof(quint64) + sizeof(int64_t);
+    int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(int64_t);
 
-    std::unique_ptr<Packet> pingPacket = Packet::create(0, PacketType::Ping, packetSize);
+    std::unique_ptr<Packet> ping_packet = Packet::Create(0, PacketType::Ping, packet_size);
 
-    pingPacket->write(reinterpret_cast<const char*>(&pingType), sizeof(pingType));
-    pingPacket->write(reinterpret_cast<const char*>(&timestamp), sizeof(timestamp));
-    pingPacket->write(reinterpret_cast<const char*>(&connection_id), sizeof(connection_id));
+    ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
+    ping_packet->write(reinterpret_cast<const char*>(&timestamp), sizeof(timestamp));
+    ping_packet->write(reinterpret_cast<const char*>(&connection_id), sizeof(connection_id));
 
-    pingPacket->writeSourceID(domain_session_local_id);
-    pingPacket->writeVerificationHash(authenticate_hash.get());
+    ping_packet->WriteSourceID(domain_session_local_id);
+    ping_packet->WriteVerificationHash(authenticate_hash.get());
 
-    //qDebug() << "Node::sendPing() - Pinging to node: " << (char) node_type << pingType << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << pingPacket->getDataSize();
-    node_socket->write(pingPacket->getData(), pingPacket->getDataSize());
+    //qDebug() << "Node::SendPing() - Pinging to node: " << (char) node_type << ping_type << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << ping_packet->GetDataSize();
+    node_socket->write(ping_packet->GetData(), ping_packet->GetDataSize());
 }
 
-void Node::sendNegotiateAudioFormat()
+void Node::SendNegotiateAudioFormat()
 {
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
-        qDebug() << "Node::sendNegotiateAudioFormat() - Stopping negotiations of audio format";
+        qDebug() << "Node::SendNegotiateAudioFormat() - Stopping negotiations of audio format";
         hifi_response_timer->stop();
         hifi_response_timer->deleteLater();
         return;
     }
 
     if (!negotiated_audio_format) {
-        qDebug() << "Node::sendNegotiateAudioFormat() - Negotiating";
+        qDebug() << "Node::SendNegotiateAudioFormat() - Negotiating";
         ++num_requests;
     }
     else {
-        qDebug() << "Node::sendNegotiateAudioFormat() - Completed negotiations";
+        qDebug() << "Node::SendNegotiateAudioFormat() - Completed negotiations";
         hifi_response_timer->stop();
         hifi_response_timer->deleteLater();
         return;
     }
 
-    auto negotiateFormatPacket = Packet::create(0,PacketType::NegotiateAudioFormat);
-    quint8 numberOfCodecs = 2; //2 - pcm and zlib
-    negotiateFormatPacket->write(reinterpret_cast<const char*>(&numberOfCodecs), sizeof(numberOfCodecs));
-    negotiateFormatPacket->writeString(QString("pcm"));
-    negotiateFormatPacket->writeString(QString("zlib"));
+    auto negotiate_format_packet = Packet::Create(0,PacketType::NegotiateAudioFormat);
+    quint8 number_of_codecs = 2; //2 - pcm and zlib
+    negotiate_format_packet->write(reinterpret_cast<const char*>(&number_of_codecs), sizeof(number_of_codecs));
+    negotiate_format_packet->WriteString(QString("pcm"));
+    negotiate_format_packet->WriteString(QString("zlib"));
 
-    negotiateFormatPacket->writeSourceID(domain_session_local_id);
-    negotiateFormatPacket->writeVerificationHash(authenticate_hash.get());
+    negotiate_format_packet->WriteSourceID(domain_session_local_id);
+    negotiate_format_packet->WriteVerificationHash(authenticate_hash.get());
 
-    node_socket->write(negotiateFormatPacket->getData(), negotiateFormatPacket->getDataSize());
-}*/
-
-QUdpSocket * Node::getSocket()
-{
-    return node_socket;
+    node_socket->write(negotiate_format_packet->GetData(), negotiate_format_packet->GetDataSize());
 }
 
-void Node::relayToClient()
+void Node::RelayToClient()
 {
     while (node_socket->hasPendingDatagrams()) {
         QByteArray datagram;
         datagram.resize(node_socket->pendingDatagramSize());
         QHostAddress sender;
-        quint16 senderPort;
+        quint16 sender_port;
 
-        node_socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
-        /*std::unique_ptr<Packet> responsePacket = Packet::fromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, senderPort);
-        //qDebug() << "Node::relayToClient() - " << (char) node_type << (int) responsePacket->getType() << sender << senderPort;
-        if (responsePacket->getType() == PacketType::Ping) {
-            //qDebug() << "Node::relayToClient() - Send ping reply";
+        node_socket->readDatagram(datagram.data(), datagram.size(), &sender, &sender_port);
+        std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
+        //qDebug() << "Node::RelayToClient() - " << (char) node_type << (int) response_packet->GetType() << sender << sender_port;
+        if (response_packet->GetType() == PacketType::Ping) {
+            //qDebug() << "Node::RelayToClient() - Send ping reply";
 
-            const char * message = responsePacket->readAll().constData();
+            const char * message = response_packet->readAll().constData();
 
-            quint8 typeFromOriginalPing;
-            quint64 timeFromOriginalPing;
-            quint64 timeNow = Utils::GetTimestamp();
-            memcpy(&typeFromOriginalPing, message, sizeof(quint8));
-            memcpy(&timeFromOriginalPing, message + sizeof(typeFromOriginalPing), sizeof(quint64));
-            //qDebug() << typeFromOriginalPing << timeFromOriginalPing << timeNow;
+            quint8 type_from_original_ping;
+            quint64 time_from_original_ping;
+            quint64 time_now = Utils::GetTimestamp();
+            memcpy(&type_from_original_ping, message, sizeof(quint8));
+            memcpy(&time_from_original_ping, message + sizeof(type_from_original_ping), sizeof(quint64));
+            //qDebug() << type_from_original_ping << time_from_original_ping << time_now;
 
-            int packetSize = sizeof(quint8) + sizeof(quint64) + sizeof(quint64);
-            auto replyPacket = Packet::create(responsePacket->getSequenceNumber(), PacketType::PingReply, packetSize);
-            replyPacket->write(reinterpret_cast<const char*>(&typeFromOriginalPing), sizeof(typeFromOriginalPing));
-            replyPacket->write(reinterpret_cast<const char*>(&timeFromOriginalPing), sizeof(timeFromOriginalPing));
-            replyPacket->write(reinterpret_cast<const char*>(&timeNow), sizeof(timeNow));
+            int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(quint64);
+            auto reply_packet = Packet::Create(response_packet->GetSequenceNumber(), PacketType::PingReply, packet_size);
+            reply_packet->write(reinterpret_cast<const char*>(&type_from_original_ping), sizeof(type_from_original_ping));
+            reply_packet->write(reinterpret_cast<const char*>(&time_from_original_ping), sizeof(time_from_original_ping));
+            reply_packet->write(reinterpret_cast<const char*>(&time_now), sizeof(time_now));
 
-            replyPacket->writeSourceID(domain_session_local_id);
-            replyPacket->writeVerificationHash(authenticate_hash.get());
+            reply_packet->WriteSourceID(domain_session_local_id);
+            reply_packet->WriteVerificationHash(authenticate_hash.get());
 
-            //qDebug() << "Node::relayToClient() - Ping reply to node: " << (char) node_type << responsePacket->getSequenceNumber() << typeFromOriginalPing << timeFromOriginalPing << timeNow << sender << senderPort;
-            node_socket->write(replyPacket->getData(), replyPacket->getDataSize());
+            //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << response_packet->GetSequenceNumber() << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
+            node_socket->write(reply_packet->GetData(), reply_packet->GetDataSize());
         }
-        else if (responsePacket->getType() == PacketType::SelectedAudioFormat) {
+        else if (response_packet->GetType() == PacketType::SelectedAudioFormat) {
             negotiated_audio_format = true;
-            qDebug() << "Node::relayToClient() - Negotiated audio format" << responsePacket->readString();
+            qDebug() << "Node::RelayToClient() - Negotiated audio format" << response_packet->ReadString();
+            SendMessageToClient(datagram);
         }
-        else if (responsePacket->getType() == PacketType::PingReply) {
+        else if (response_packet->GetType() == PacketType::PingReply) {
             connected = true;
-            //qDebug() << "Node::relayToClient() - " << (char) node_type << (int) responsePacket->getType() << sender << senderPort;
+            //qDebug() << "Node::RelayToClient() - " << (char) node_type << (int) response_packet->GetType() << sender << sender_port;
 
             if (!negotiated_audio_format && !started_negotiating_audio_format && node_type == NodeType::AudioMixer) {
-                startNegotiateAudioFormat();
+                StartNegotiateAudioFormat();
             }
         }
-        else if (connected){*/
-            qDebug() << "Node::relayToClient() - Relay to client";
+        else if (connected){
+            qDebug() << "Node::RelayToClient() - Relay to client";
             SendMessageToClient(datagram);
-        //}
+        }
     }
 }
 
-void Node::setDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
+void Node::SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
 {
     if (channel == nullptr) {
         data_channel = channel;
@@ -234,24 +250,25 @@ void Node::setDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
 
     std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
         QString m = QString::fromStdString(message);
-        qDebug() << "Node::onMessage() - " << (char) this->getNodeType() << m;
+        qDebug() << "Node::onMessage() - " << (char) this->GetNodeType() << m;
         this->SendMessageToServer(m);
     };
     channel->SetOnStringMsgCallback(onStringMessageCallback);
 
     std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
         QByteArray m = QByteArray((char *) message->Data(), message->Length());
-        qDebug() << "Node::onMessage() - " << (char) this->getNodeType() << m;
+        qDebug() << "Node::onMessage() - " << (char) this->GetNodeType() << m;
         this->SendMessageToServer(m);
     };
     channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
 
     std::function<void()> onClosed = [this]() {
         qDebug() << "Node::onClosed() - Data channel closed" << (char) node_type;
-        this->setDataChannel(nullptr);
+        this->SetDataChannel(nullptr);
+        Q_EMIT Disconnected();
     };
     channel->SetOnClosedCallback(onClosed);
 
     data_channel = channel;
-    SendMessageToClient(QString("node_message")); // TODO: remove this test message
+    //SendMessageToClient(QString("node_message"));
 }

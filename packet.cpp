@@ -1,6 +1,6 @@
 #include "packet.h"
 
-PacketVersion versionForPacketType(PacketType packetType) {
+PacketVersion VersionForPacketType(PacketType packetType) {
     switch (packetType) {
         case PacketType::StunResponse:
             return 17;
@@ -88,18 +88,18 @@ uint qHash(const PacketType& key, uint seed) {
 Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
 {
     type = t;
-    version = versionForPacketType(t);
+    version = VersionForPacketType(t);
 
-    packetSize = (size == -1) ? MAX_PACKET_SIZE: size;
-    payloadSize = 0;
-    payloadCapacity = packetSize;
-    packet.reset(new char[packetSize]());
-    payloadStart = packet.get();
-    sequenceNumber = sequence;
-    isPartOfMessage = false;
+    packet_size = (size == -1) ? MAX_PACKET_SIZE: size;
+    payload_size = 0;
+    payload_capacity = packet_size;
+    packet.reset(new char[packet_size]());
+    payload_start = packet.get();
+    sequence_number = sequence;
+    is_part_of_message = false;
 
     // Pack the sequence number
-    memcpy(packet.get(), &sequenceNumber, sizeof(uint32_t));
+    memcpy(packet.get(), &sequence_number, sizeof(uint32_t));
 
     // Pack the packet type
     memcpy(packet.get() + sizeof(uint32_t), &type, sizeof(PacketType));
@@ -107,84 +107,84 @@ Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
     // Pack the packet version
     memcpy(packet.get() + sizeof(uint32_t) + sizeof(PacketType), &version, sizeof(PacketVersion));
 
-    adjustPayloadStartAndCapacity(Packet::headerSize(false) + Packet::localHeaderSize(type));
+    AdjustPayloadStartAndCapacity(Packet::HeaderSize(false) + Packet::LocalHeaderSize(type));
 }
 
 Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
 {
-    packetSize = size;
+    packet_size = size;
 
     packet.reset(new char[size]());
     memcpy(packet.get(),data,size);
 
-    payloadStart = packet.get();
-    payloadCapacity = size;
-    payloadSize = size;
+    payload_start = packet.get();
+    payload_capacity = size;
+    payload_size = size;
 
-    uint32_t* seqNumBitField = reinterpret_cast<uint32_t*>(packet.get());
+    uint32_t* seq_num_bit_field = reinterpret_cast<uint32_t*>(packet.get());
 
-    isReliable = (bool) (*seqNumBitField & RELIABILITY_BIT_MASK); // Only keep reliability bit
-    isPartOfMessage = (bool) (*seqNumBitField & MESSAGE_BIT_MASK); // Only keep message bit
-    obfuscationLevel = (int)((*seqNumBitField & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
-    sequenceNumber = (uint32_t)(*seqNumBitField & SEQUENCE_NUMBER_MASK ); // Remove the bit field
+    is_reliable = (bool) (*seq_num_bit_field & RELIABILITY_BIT_MASK); // Only keep reliability bit
+    is_part_of_message = (bool) (*seq_num_bit_field & MESSAGE_BIT_MASK); // Only keep message bit
+    obfuscation_level = (int)((*seq_num_bit_field & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
+    sequence_number = (uint32_t)(*seq_num_bit_field & SEQUENCE_NUMBER_MASK ); // Remove the bit field
 
-    //qDebug() << isReliable << isPartOfMessage << obfuscationLevel << sequenceNumber;
+    //qDebug() << is_reliable << is_part_of_message << obfuscation_level << sequence_number;
 
-    if (isPartOfMessage) {
-        uint32_t* messageNumberAndBitField = seqNumBitField + 1;
+    if (is_part_of_message) {
+        uint32_t* message_number_and_bitfield = seq_num_bit_field + 1;
 
-        messageNumber = *messageNumberAndBitField & MESSAGE_NUMBER_MASK;
-        packetPosition = static_cast<short>(*messageNumberAndBitField >> PACKET_POSITION_OFFSET);
+        message_number = *message_number_and_bitfield & MESSAGE_NUMBER_MASK;
+        packet_position = static_cast<short>(*message_number_and_bitfield >> PACKET_POSITION_OFFSET);
 
-        messagePartNumber = messageNumberAndBitField + 1;
+        message_part_number = message_number_and_bitfield + 1;
 
-        //qDebug() << messageNumber << (int) packetPosition << messagePartNumber;
+        //qDebug() << message_number << (int) packet_position << message_part_number;
     }
 
-    adjustPayloadStartAndCapacity(Packet::headerSize(isPartOfMessage), payloadSize > 0);
+    AdjustPayloadStartAndCapacity(Packet::HeaderSize(is_part_of_message), payload_size > 0);
 
-    if (obfuscationLevel != Packet::NoObfuscation) {
-        obfuscate(Packet::NoObfuscation); // Undo obfuscation
+    if (obfuscation_level != Packet::NoObfuscation) {
+        Obfuscate(Packet::NoObfuscation); // Undo obfuscation
     }
 
-    auto headerOffset = Packet::headerSize(isPartOfMessage);
-    type = *reinterpret_cast<const PacketType*>(packet.get() + headerOffset);
+    auto header_offset = Packet::HeaderSize(is_part_of_message);
+    type = *reinterpret_cast<const PacketType*>(packet.get() + header_offset);
 
-    version = *reinterpret_cast<const PacketVersion*>(packet.get() + headerOffset + sizeof(PacketType));
-    quint16 local_id =  *reinterpret_cast<const PacketVersion*>(packet.get() + headerOffset + sizeof(PacketType));
+    version = *reinterpret_cast<const PacketVersion*>(packet.get() + header_offset + sizeof(PacketType));
+    quint16 local_id =  *reinterpret_cast<const PacketVersion*>(packet.get() + header_offset + sizeof(PacketType));
 
-    adjustPayloadStartAndCapacity(Packet::localHeaderSize(type), payloadSize > 0);
+    AdjustPayloadStartAndCapacity(Packet::LocalHeaderSize(type), payload_size > 0);
 
-    //int h = (Packet::localHeaderSize(type) + Packet::headerSize(isPartOfMessage));
+    //int h = (Packet::LocalHeaderSize(type) + Packet::HeaderSize(is_part_of_message));
     //qDebug() << h << (quint8)type << (int)version << local_id;
 }
 
-int Packet::headerSize(bool isPartOfMessage) {
+int Packet::HeaderSize(bool is_part_of_message) {
     return sizeof(uint32_t) +
-            (isPartOfMessage ? 2*sizeof(uint32_t) : 0);
+            (is_part_of_message ? 2*sizeof(uint32_t) : 0);
 }
 
-int Packet::localHeaderSize(PacketType type) {
-    bool nonSourced = PacketTypeEnum::getNonSourcedPackets().contains(type);
-    bool nonVerified = PacketTypeEnum::getNonVerifiedPackets().contains(type);
-    qint64 optionalSize = (nonSourced ? 0 : 2) + ((nonSourced || nonVerified) ? 0 : 16);
-    return sizeof(PacketType) + sizeof(PacketVersion) + optionalSize;
+int Packet::LocalHeaderSize(PacketType type) {
+    bool non_sourced = PacketTypeEnum::GetNonSourcedPackets().contains(type);
+    bool non_verified = PacketTypeEnum::GetNonVerifiedPackets().contains(type);
+    qint64 optional_size = (non_sourced ? 0 : 2) + ((non_sourced || non_verified) ? 0 : 16);
+    return sizeof(PacketType) + sizeof(PacketVersion) + optional_size;
 }
 
-int Packet::totalHeaderSize() {
-    return headerSize(isPartOfMessage) + localHeaderSize(type);
+int Packet::TotalHeaderSize() {
+    return HeaderSize(is_part_of_message) + LocalHeaderSize(type);
 }
 
-std::unique_ptr<Packet> Packet::create(uint32_t sequence, PacketType t, qint64 size)
+std::unique_ptr<Packet> Packet::Create(uint32_t sequence, PacketType t, qint64 size)
 {
-    auto packet = std::unique_ptr<Packet>(new Packet(sequence,t,(size == -1) ? -1 : (headerSize(false) + localHeaderSize(t) + size)));
+    auto packet = std::unique_ptr<Packet>(new Packet(sequence,t,(size == -1) ? -1 : (HeaderSize(false) + LocalHeaderSize(t) + size)));
 
     packet->open(QIODevice::ReadWrite);
 
     return packet;
 }
 
-std::unique_ptr<Packet> Packet::fromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
+std::unique_ptr<Packet> Packet::FromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
 {
     // allocate memory
     auto packet = std::unique_ptr<Packet>(new Packet(data, size, addr, port));
@@ -195,150 +195,140 @@ std::unique_ptr<Packet> Packet::fromReceivedPacket(char * data, qint64 size, QHo
 }
 
 
-void Packet::adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize)
+void Packet::AdjustPayloadStartAndCapacity(int header_size, bool should_decrease_payload_size)
 {
-    payloadStart += headerSize;
-    payloadCapacity -= headerSize;
+    payload_start += header_size;
+    payload_capacity -= header_size;
 
-    if (shouldDecreasePayloadSize) {
-        payloadSize -= headerSize;
+    if (should_decrease_payload_size) {
+        payload_size -= header_size;
     }
 }
 
 bool Packet::reset() {
     if (isWritable()) {
-        payloadSize = 0;
+        payload_size = 0;
     }
 
     return QIODevice::reset();
 }
 
-qint64 Packet::writeData(const char* data, qint64 maxSize) {
-    Q_ASSERT_X(maxSize <= bytesAvailableForWrite(), "BasePacket::writeData", "not enough space for write");
+qint64 Packet::writeData(const char* data, qint64 max_size) {
+    Q_ASSERT_X(max_size <= BytesAvailableForWrite(), "BasePacket::writeData", "not enough space for write");
 
     // make sure we have the space required to write this block
-    if (maxSize <= bytesAvailableForWrite()) {
+    if (max_size <= BytesAvailableForWrite()) {
         qint64 currentPos = pos();
 
         // good to go - write the data
-        memcpy(payloadStart + currentPos, data, maxSize);
+        memcpy(payload_start + currentPos, data, max_size);
 
-        // keep track of _payloadSize so we can just write the actual data when packet is about to be sent
-        payloadSize = std::max(currentPos + maxSize, payloadSize);
+        // keep track of _payload_size so we can just write the actual data when packet is about to be sent
+        payload_size = std::max(currentPos + max_size, payload_size);
 
         // return the number of bytes written
-        return maxSize;
+        return max_size;
     } else {
         // not enough space left for this write - return an error
         return 0;
     }
 }
 
-qint64 Packet::readData(char* dest, qint64 maxSize) {
+qint64 Packet::readData(char* dest, qint64 max_size) {
     // we're either reading what is left from the current position or what was asked to be read
-    qint64 numBytesToRead = std::min(bytesLeftToRead(), maxSize);
+    qint64 num_bytes_to_read = std::min(BytesLeftToRead(), max_size);
 
-    if (numBytesToRead > 0) {
+    if (num_bytes_to_read > 0) {
         int currentPosition = pos();
 
         // read out the data
-        memcpy(dest, payloadStart + currentPosition, numBytesToRead);
+        memcpy(dest, payload_start + currentPosition, num_bytes_to_read);
     }
 
-    return numBytesToRead;
+    return num_bytes_to_read;
 }
 
-QByteArray Packet::readWithoutCopy(qint64 maxSize) {
-    qint64 sizeToRead = std::min(size() - pos(), maxSize);
-    QByteArray data { QByteArray::fromRawData(payloadStart + pos(), sizeToRead) };
-    seek(pos() + sizeToRead);
-    return data;
-}
-
-void xorHelper(char* start, int size, uint64_t key) {
-    auto current = start;
-    auto xorValue = reinterpret_cast<const char*>(&key);
-    for (int i = 0; i < size; ++i) {
-        *(current++) ^= *(xorValue + (i % sizeof(uint64_t)));
-    }
-}
-
-void Packet::obfuscate(ObfuscationLevel level) {
+void Packet::Obfuscate(ObfuscationLevel level) {
     QList<uint64_t> KEYS = QList<uint64_t>() << 0x0 << 0x6362726973736574 << 0x7362697261726461 << 0x72687566666d616e;
-    auto obfuscationKey = KEYS[obfuscationLevel] ^ KEYS[level]; // Undo old and apply new one.
-    if (obfuscationKey != 0) {
-        xorHelper(getData() + headerSize(isPartOfMessage),
-                  getDataSize() - headerSize(isPartOfMessage), obfuscationKey);
+    auto obfuscation_key = KEYS[obfuscation_level] ^ KEYS[level]; // Undo old and apply new one.
+    if (obfuscation_key != 0) {
+
+        int size = GetDataSize() - HeaderSize(is_part_of_message);
+        char * current = GetData() + HeaderSize(is_part_of_message);
+        auto xor_value = reinterpret_cast<const char*>(&obfuscation_key);
+        for (int i = 0; i < size; ++i) {
+            *(current++) ^= *(xor_value + (i % sizeof(uint64_t)));
+        }
 
         // Update members and header
-        obfuscationLevel = level;
+        obfuscation_level = level;
 
-        uint32_t* seqNumBitField = reinterpret_cast<uint32_t*>(packet.get());
+        uint32_t* seq_num_bit_field = reinterpret_cast<uint32_t*>(packet.get());
 
         // Write sequence number and reset bit field
-        *seqNumBitField = (sequenceNumber);
+        *seq_num_bit_field = (sequence_number);
 
-        if (isReliable) {
-            *seqNumBitField |= RELIABILITY_BIT_MASK;
+        if (is_reliable) {
+            *seq_num_bit_field |= RELIABILITY_BIT_MASK;
         }
 
-        if (obfuscationLevel != NoObfuscation) {
-            *seqNumBitField |= (obfuscationLevel << OBFUSCATION_LEVEL_OFFSET);
+        if (obfuscation_level != NoObfuscation) {
+            *seq_num_bit_field |= (obfuscation_level << OBFUSCATION_LEVEL_OFFSET);
         }
 
-        if (isPartOfMessage) {
-            *seqNumBitField |= MESSAGE_BIT_MASK;
+        if (is_part_of_message) {
+            *seq_num_bit_field |= MESSAGE_BIT_MASK;
 
-            uint32_t* messageNumberAndBitField = seqNumBitField + 1;
-            *messageNumberAndBitField = messageNumber;
-            *messageNumberAndBitField |= packetPosition << PACKET_POSITION_OFFSET;
+            uint32_t* message_number_and_bitfield = seq_num_bit_field + 1;
+            *message_number_and_bitfield = message_number;
+            *message_number_and_bitfield |= packet_position << PACKET_POSITION_OFFSET;
 
-            uint32_t* messagePartNumber = messageNumberAndBitField + 1;
-            *this->messagePartNumber = *messagePartNumber;
+            uint32_t* message_part_number = message_number_and_bitfield + 1;
+            *this->message_part_number = *message_part_number;
         }
     }
 }
 
-void Packet::writeSourceID(quint16 s)
+void Packet::WriteSourceID(quint16 s)
 {
-    if (PacketTypeEnum::getNonSourcedPackets().contains(type)) return;
+    if (PacketTypeEnum::GetNonSourcedPackets().contains(type)) return;
 
-    auto offset = Packet::headerSize(false) + sizeof(PacketType) + sizeof(PacketVersion);
+    auto offset = Packet::HeaderSize(false) + sizeof(PacketType) + sizeof(PacketVersion);
 
     memcpy(packet.get() + offset, &s, sizeof(s));
 
-    sourceID = s;
-    //qDebug() << "source id"  << sourceID;
+    source_id = s;
+    //qDebug() << "source id"  << source_id;
 }
 
-QByteArray Packet::hashForPacketAndHMAC(const Packet& packet, HMACAuth * hash) {
-    int offset = Packet::headerSize(packet.getIsPartOfMessage()) + sizeof(PacketType) + sizeof(PacketVersion)
+QByteArray Packet::HashForPacketAndHMAC(const Packet& packet, HMACAuth * hash) {
+    int offset = Packet::HeaderSize(packet.GetIsPartOfMessage()) + sizeof(PacketType) + sizeof(PacketVersion)
         + 2 + 16;
 
     // add the packet payload and the connection UUID
-    HMACAuth::HMACHash hashResult;
-    if (!hash->calculateHash(hashResult, packet.getData() + offset, packet.getDataSize() - offset)) {
+    HMACAuth::HMACHash hash_result;
+    if (!hash->CalculateHash(hash_result, packet.GetData() + offset, packet.GetDataSize() - offset)) {
         return QByteArray();
     }
-    return QByteArray((const char*) hashResult.data(), (int) hashResult.size());
+    return QByteArray((const char*) hash_result.data(), (int) hash_result.size());
 }
 
-void Packet::writeVerificationHash(HMACAuth * hmacAuth)
+void Packet::WriteVerificationHash(HMACAuth * h)
 {
-    if (PacketTypeEnum::getNonSourcedPackets().contains(type) || PacketTypeEnum::getNonVerifiedPackets().contains(type))
+    if (PacketTypeEnum::GetNonSourcedPackets().contains(type) || PacketTypeEnum::GetNonVerifiedPackets().contains(type))
         return;
 
-    auto offset = Packet::headerSize(false) + sizeof(PacketType) + sizeof(PacketVersion)
+    auto offset = Packet::HeaderSize(false) + sizeof(PacketType) + sizeof(PacketVersion)
                 + 2; // Num bytes of localID
 
-    QByteArray verificationHash = hashForPacketAndHMAC(*this, hmacAuth);
+    QByteArray verification_hash = HashForPacketAndHMAC(*this, h);
 
     //qDebug() << "verification hash" << verificationHash << verificationHash.size();
 
-    memcpy(packet.get() + offset, verificationHash.data(), verificationHash.size());
+    memcpy(packet.get() + offset, verification_hash.data(), verification_hash.size());
 }
 
-qint64 Packet::writeString(const QString& string)
+qint64 Packet::WriteString(const QString& string)
 {
     QByteArray data = string.toUtf8();
     uint32_t length = data.length();
@@ -347,11 +337,11 @@ qint64 Packet::writeString(const QString& string)
     return length + sizeof(uint32_t);
 }
 
-QString Packet::readString()
+QString Packet::ReadString()
 {
     uint32_t size;
     read(reinterpret_cast<char*>(&size), sizeof(uint32_t));
-    auto string = QString::fromUtf8(payloadStart + pos(), size);
+    auto string = QString::fromUtf8(payload_start + pos(), size);
     seek(pos() + size);
     return string;
 }

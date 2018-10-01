@@ -11,11 +11,22 @@
 #include <IOKit/storage/IOMedia.h>
 #endif //Q_OS_MAC
 
-QByteArray Utils::protocolVersionSignature = QByteArray();
-QString Utils::protocolVersionSignatureBase64 = QString();
-QUuid Utils::machineFingerprint = QUuid();
+QByteArray Utils::protocol_version_signature = QByteArray();
+QString Utils::protocol_version_signature_base64 = QString();
+QUuid Utils::machine_fingerprint = QUuid();
 quint64 Utils::TIMESTAMP_REF = 0;
-QElapsedTimer Utils::timestampTimer = QElapsedTimer();
+QElapsedTimer Utils::timestamp_timer = QElapsedTimer();
+
+QString Utils::domain_name = "";
+QString Utils::domain_place_name = "";
+QUuid Utils::domain_id = QUuid();
+bool Utils::finished_domain_id_request = false;
+QString Utils::stun_server_hostname = "stun.highfidelity.io";
+quint16 Utils::stun_server_port = 3478;
+QString Utils::ice_server_hostname = "ice.highfidelity.com"; //"dev-ice.highfidelity.com";
+QHostAddress Utils::ice_server_address = QHostAddress();
+quint16 Utils::ice_server_port = 7337;
+bool Utils::use_custom_ice_server = false;
 
 Utils::Utils()
 {
@@ -30,68 +41,68 @@ Utils::~Utils()
 void Utils::SetupTimestamp()
 {
     TIMESTAMP_REF = QDateTime::currentMSecsSinceEpoch() * 1000;
-    timestampTimer.start();
+    timestamp_timer.start();
 }
 
 quint64 Utils::GetTimestamp()
 {
     quint64 now;
-    quint64 nsecsElapsed = timestampTimer.nsecsElapsed();
-    quint64 usecsElapsed = nsecsElapsed / 1000;  // nsec to usec
+    quint64 nsecs_elapsed = timestamp_timer.nsecsElapsed();
+    quint64 usecs_elapsed = nsecs_elapsed / 1000;  // nsec to usec
 
-    quint64 msecsCurrentTime = QDateTime::currentMSecsSinceEpoch();
-    quint64 msecsEstimate = (TIMESTAMP_REF + usecsElapsed) / 1000; // usecs to msecs
-    int possibleSkew = msecsEstimate - msecsCurrentTime;
+    quint64 msecs_current_time = QDateTime::currentMSecsSinceEpoch();
+    quint64 msecs_estimate = (TIMESTAMP_REF + usecs_elapsed) / 1000; // usecs to msecs
+    int possible_skew = msecs_estimate - msecs_current_time;
     const int TOLERANCE = 10 * 1000; // up to 10 seconds of skew is tolerated
-    if (abs(possibleSkew) > TOLERANCE) {
+    if (abs(possible_skew) > TOLERANCE) {
         // reset our TIME_REFERENCE and timer
         TIMESTAMP_REF = QDateTime::currentMSecsSinceEpoch() * 1000; // ms to usec
-        timestampTimer.restart();
+        timestamp_timer.restart();
         now = TIMESTAMP_REF;
     } else {
-        now = TIMESTAMP_REF + usecsElapsed;
+        now = TIMESTAMP_REF + usecs_elapsed;
     }
 
     return now;
 }
 
-void Utils::SetupProtocolVersionSignatures()
+void Utils::SetupProtocolVersionSignature()
 {
     QByteArray buffer;
     QDataStream stream(&buffer, QIODevice::WriteOnly);
-    uint8_t numberOfProtocols = static_cast<uint8_t>(PacketType::NUM_PACKET_TYPE);
-    stream << numberOfProtocols;
-    for (uint8_t packetType = 0; packetType < numberOfProtocols; packetType++) {
-        uint8_t packetTypeVersion = static_cast<uint8_t>(versionForPacketType(static_cast<PacketType>(packetType)));
-        stream << packetTypeVersion;
+    uint8_t number_of_protocols = static_cast<uint8_t>(PacketType::NUM_PACKET_TYPE);
+    stream << number_of_protocols;
+    for (uint8_t packet_type = 0; packet_type < number_of_protocols; packet_type++) {
+        uint8_t packet_type_version = static_cast<uint8_t>(VersionForPacketType(static_cast<PacketType>(packet_type)));
+        stream << packet_type_version;
     }
     QCryptographicHash hash(QCryptographicHash::Md5);
     hash.addData(buffer);
-    protocolVersionSignature = hash.result();
-    protocolVersionSignatureBase64 = protocolVersionSignature.toBase64();
+    protocol_version_signature = hash.result();
+    protocol_version_signature_base64 = protocol_version_signature.toBase64();
 
-    qDebug() << "Utils::SetupProtocolVersionSignatures - Completed";
+    qDebug() << "Utils::SetupProtocolVersionSignature - Completed";
 }
 
 QByteArray Utils::GetProtocolVersionSignature()
 {
-    return protocolVersionSignature;
+    return protocol_version_signature;
 }
 
 QString Utils::GetProtocolVersionSignatureBase64()
 {
-    return protocolVersionSignatureBase64;
+    return protocol_version_signature_base64;
 }
 
 QUuid Utils::GetMachineFingerprint()
 {
-    if (machineFingerprint.isNull()) {
-        QString uuidString = getMachineFingerprintString();
+    if (machine_fingerprint.isNull()) {
+        QString uuid_string = GetMachineFingerprintString();
 
         // now, turn into uuid.  A malformed string will
         // return QUuid() ("{00000...}"), which handles
         // any errors in getting the string
-        QUuid uuid(uuidString);
+        QUuid uuid(uuid_string);
 
         //TODO: save out UUID to a settings file and use it
         if (uuid == QUuid()) {
@@ -99,15 +110,15 @@ QUuid Utils::GetMachineFingerprint()
             uuid = QUuid::createUuid();
         }
 
-        machineFingerprint = uuid;
-        //qDebug() << "Utils::GetMachineFingerprint - " << machineFingerprint;
+        machine_fingerprint = uuid;
+        //qDebug() << "Utils::GetMachineFingerprint - " << machine_fingerprint;
     }
 
-    return machineFingerprint;
+    return machine_fingerprint;
 }
 
-QString Utils::getMachineFingerprintString() {
-    QString uuidString;
+QString Utils::GetMachineFingerprintString() {
+    QString uuid_string;
 #ifdef Q_OS_LINUX
     // sadly need to be root to get smbios guid from linux, so
     // for now lets do nothing.
@@ -117,9 +128,9 @@ QString Utils::getMachineFingerprintString() {
     io_registry_entry_t ioRegistryRoot = IORegistryEntryFromPath(kIOMasterPortDefault, "IOService:/");
     CFStringRef uuidCf = (CFStringRef) IORegistryEntryCreateCFProperty(ioRegistryRoot, CFSTR(kIOPlatformUUIDKey), kCFAllocatorDefault, 0);
     IOObjectRelease(ioRegistryRoot);
-    uuidString = QString::fromCFString(uuidCf);
+    uuid_string = QString::fromCFString(uuidCf);
     CFRelease(uuidCf);
-    //qDebug() << "Utils::getMachineFingerprintString() - Mac serial number: " << uuidString;
+    //qDebug() << "Utils::GetMachineFingerprintString() - Mac serial number: " << uuid_string;
 #endif //Q_OS_MAC
 
 #ifdef Q_OS_WIN
@@ -141,7 +152,7 @@ QString Utils::getMachineFingerprintString() {
 
                 if (RegQueryValueEx(cryptoKey, MACHINE_GUID_KEY, NULL, NULL,
                                     reinterpret_cast<LPBYTE>(&machineGUID[0]), &guidSize) == ERROR_SUCCESS) {
-                    uuidString = QString::fromStdString(machineGUID);
+                    uuid_string = QString::fromStdString(machineGUID);
                 }
             }
         }
@@ -151,20 +162,20 @@ QString Utils::getMachineFingerprintString() {
 
 #endif //Q_OS_WIN
 
-    return uuidString;
+    return uuid_string;
 
 }
 
 QString Utils::GetHardwareAddress(QHostAddress local_addr)
 {
     // if possible, include the MAC address for the current interface in our connect request
-    QString hardwareAddress;
+    QString hardware_address;
 
-    for (auto networkInterface : QNetworkInterface::allInterfaces()) {
-        for (auto interfaceAddress : networkInterface.addressEntries()) {
-            if (interfaceAddress.ip() == local_addr) {
+    for (auto network_interface : QNetworkInterface::allInterfaces()) {
+        for (auto interface_addresss : network_interface.addressEntries()) {
+            if (interface_addresss.ip() == local_addr) {
                 // this is the interface whose local IP matches what we've detected the current IP to be
-                hardwareAddress = networkInterface.hardwareAddress();
+                hardware_address = network_interface.hardwareAddress();
 
                 // stop checking interfaces and addresses
                 break;
@@ -172,10 +183,10 @@ QString Utils::GetHardwareAddress(QHostAddress local_addr)
         }
 
         // stop looping if this was the current interface
-        if (!hardwareAddress.isEmpty()) {
+        if (!hardware_address.isEmpty()) {
             break;
         }
     }
 
-    return hardwareAddress;
+    return hardware_address;
 }

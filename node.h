@@ -64,26 +64,24 @@ public:
     Node();
     ~Node();
 
-    NodeType_t getNodeType() {return node_type;}
+    NodeType_t GetNodeType() {return node_type;}
 
-    void setNodeID(QUuid n);
-    void setNodeType(NodeType_t n);
-    void setPublicAddress(QHostAddress a, quint16 p);
-    void setLocalAddress(QHostAddress a, quint16 p);
-    void setSessionLocalID(quint16 s);
-    void setDomainSessionLocalID(quint16 s);
-    void setIsReplicated(bool b);
-    void setConnectionSecret(QUuid c);
-    void setPermissions(Permissions p);
+    void SetNodeID(QUuid n);
+    void SetNodeType(NodeType_t n);
+    void SetPublicAddress(QHostAddress a, quint16 p);
+    void SetLocalAddress(QHostAddress a, quint16 p);
+    void SetSessionLocalID(quint16 s);
+    void SetDomainSessionLocalID(quint16 s);
+    void SetIsReplicated(bool b);
+    void SetConnectionSecret(QUuid c);
+    void SetPermissions(Permissions p);
 
-    void setDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
+    void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
 
-    void activatePublicSocket(QHostAddress l, quint16 p);
+    void ActivatePublicSocket(QHostAddress l, quint16 p);
 
-    //void startPing();
-    //void startNegotiateAudioFormat();
-
-    QUdpSocket * getSocket();
+    void StartPing();
+    void StartNegotiateAudioFormat();
 
     void SendMessageToServer(QString message) {node_socket->write(message.toLatin1());}
     void SendMessageToServer(QByteArray message) {node_socket->write(message);}
@@ -91,10 +89,14 @@ public:
     void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
     void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
 
+Q_SIGNALS:
+    void Disconnected();
+
 public Q_SLOTS:
-    //void sendNegotiateAudioFormat();
-    //void sendPing();
-    void relayToClient();
+    void SendNegotiateAudioFormat();
+    void SendPing();
+    void RelayToClient();
+    void Disconnect();
 
 private:
     QUuid node_id;
@@ -116,12 +118,12 @@ private:
 
     QUdpSocket * node_socket;
 
-    //QTimer * ping_timer;
-    //QTimer * hifi_response_timer;
+    QTimer * ping_timer;
+    QTimer * hifi_response_timer;
 
-    //bool started_negotiating_audio_format;
-    //bool negotiated_audio_format;
-    //int num_requests;
+    bool started_negotiating_audio_format;
+    bool negotiated_audio_format;
+    int num_requests;
 
     std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 };

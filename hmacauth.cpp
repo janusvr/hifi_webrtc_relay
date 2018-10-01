@@ -2,50 +2,50 @@
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000
 HMACAuth::HMACAuth(AuthMethod authMethod)
-    : _hmacContext(HMAC_CTX_new())
-    , _authMethod(authMethod) { }
+    : hmac_context(HMAC_CTX_new())
+    , auth_method(authMethod) { }
 
 HMACAuth::~HMACAuth()
 {
-    HMAC_CTX_free(_hmacContext);
+    HMAC_CTX_free(hmac_context);
 }
 
 #else
 
-HMACAuth::HMACAuth(AuthMethod authMethod)
-    : _hmacContext(new HMAC_CTX())
-    , _authMethod(authMethod) {
-    HMAC_CTX_init(_hmacContext);
+HMACAuth::HMACAuth(AuthMethod auth_method)
+    : hmac_context(new HMAC_CTX())
+    , auth_method(auth_method) {
+    HMAC_CTX_init(hmac_context);
 }
 
 HMACAuth::~HMACAuth() {
-    HMAC_CTX_cleanup(_hmacContext);
-    delete _hmacContext;
+    HMAC_CTX_cleanup(hmac_context);
+    delete hmac_context;
 }
 #endif
 
-bool HMACAuth::setKey(const char* keyValue, int keyLen) {
-    const EVP_MD* sslStruct = nullptr;
+bool HMACAuth::SetKey(const char* keyValue, int keyLen) {
+    const EVP_MD* ssl_struct = nullptr;
 
-    switch (_authMethod) {
+    switch (auth_method) {
     case MD5:
-        sslStruct = EVP_md5();
+        ssl_struct = EVP_md5();
         break;
 
     case SHA1:
-        sslStruct = EVP_sha1();
+        ssl_struct = EVP_sha1();
         break;
 
     case SHA224:
-        sslStruct = EVP_sha224();
+        ssl_struct = EVP_sha224();
         break;
 
     case SHA256:
-        sslStruct = EVP_sha256();
+        ssl_struct = EVP_sha256();
         break;
 
     case RIPEMD160:
-        sslStruct = EVP_ripemd160();
+        ssl_struct = EVP_ripemd160();
         break;
 
     default:
@@ -53,45 +53,45 @@ bool HMACAuth::setKey(const char* keyValue, int keyLen) {
     }
 
     QMutexLocker lock(&_lock);
-    return (bool) HMAC_Init_ex(_hmacContext, keyValue, keyLen, sslStruct, nullptr);
+    return (bool) HMAC_Init_ex(hmac_context, keyValue, keyLen, ssl_struct, nullptr);
 }
 
-bool HMACAuth::setKey(const QUuid& uidKey) {
+bool HMACAuth::SetKey(const QUuid& uidKey) {
     const QByteArray rfcBytes(uidKey.toRfc4122());
-    return setKey(rfcBytes.constData(), rfcBytes.length());
+    return SetKey(rfcBytes.constData(), rfcBytes.length());
 }
 
-bool HMACAuth::addData(const char* data, int dataLen) {
+bool HMACAuth::AddData(const char* data, int data_len) {
     QMutexLocker lock(&_lock);
-    return (bool) HMAC_Update(_hmacContext, reinterpret_cast<const unsigned char*>(data), dataLen);
+    return (bool) HMAC_Update(hmac_context, reinterpret_cast<const unsigned char*>(data), data_len);
 }
 
-HMACAuth::HMACHash HMACAuth::result() {
-    HMACHash hashValue(EVP_MAX_MD_SIZE);
-    unsigned int hashLen;
+HMACAuth::HMACHash HMACAuth::Result() {
+    HMACHash hash_value(EVP_MAX_MD_SIZE);
+    unsigned int hash_len;
     QMutexLocker lock(&_lock);
 
-    auto hmacResult = HMAC_Final(_hmacContext, &hashValue[0], &hashLen);
+    auto hmac_result = HMAC_Final(hmac_context, &hash_value[0], &hash_len);
 
-    if (hmacResult) {
-        hashValue.resize((size_t)hashLen);
+    if (hmac_result) {
+        hash_value.resize((size_t)hash_len);
     } else {
         // the HMAC_FINAL call failed - should not be possible to get into this state
         qDebug() << "Error occured calling HMAC_Final";
     }
 
     // Clear state for possible reuse.
-    HMAC_Init_ex(_hmacContext, nullptr, 0, nullptr, nullptr);
-    return hashValue;
+    HMAC_Init_ex(hmac_context, nullptr, 0, nullptr, nullptr);
+    return hash_value;
 }
 
-bool HMACAuth::calculateHash(HMACHash& hashResult, const char* data, int dataLen) {
+bool HMACAuth::CalculateHash(HMACHash& hash_result, const char* data, int data_len) {
     QMutexLocker lock(&_lock);
-    if (!addData(data, dataLen)) {
+    if (!AddData(data, data_len)) {
         qDebug() << "Error occured calling HMACAuth::addData()";
         return false;
     }
 
-    hashResult = result();
+    hash_result = Result();
     return true;
 }

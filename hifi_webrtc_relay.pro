@@ -22,7 +22,8 @@ SOURCES += main.cpp \
     packet.cpp \
     utils.cpp \
     node.cpp \
-    hmacauth.cpp
+    hmacauth.cpp \
+    hificonnection.cpp
 
 HEADERS += \
     task.h \
@@ -30,12 +31,17 @@ HEADERS += \
     utils.h \
     node.h \
     hmacauth.h \
-    portableendian.h
+    portableendian.h \
+    hificonnection.h
+
+unix:!macx:LIBS += -lssl -lcrypto
+unix:!macx:INCLUDEPATH += "/usr/include"
 
 unix:macx:LIBS += -L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto
 unix:macx:INCLUDEPATH += "/usr/local/Cellar/openssl/1.0.2o_1/include"
 
 INCLUDEPATH +="./resources/librtcdcpp/include"
+unix:!macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/linux" -lrtcdcpp
 unix:macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/mac" -lrtcdcpp
 
 unix:macx:OPENSSL_LIBS='-L"/usr/local/Cellar/openssl/1.0.2o_1/lib" -lssl -lcrypto'
@@ -49,6 +55,10 @@ win32:OPENSSL_LIBS ='-L"$$PWD/resources/openssl/x64/lib" -llibcrypto -llibssl'
 
 win32:LIBS += -L"$$PWD/resources/windows"
 win32:LIBS += -lws2_32 -lAdvAPI32
+
+unix:!macx:{
+   QMAKE_LFLAGS += -Wl,-rpath,"'\$$ORIGIN'"
+}
 
 CONFIG += openssl-linked
 CONFIG += no_keywords

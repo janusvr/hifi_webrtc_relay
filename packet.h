@@ -120,7 +120,7 @@ public:
         NUM_PACKET_TYPE
     };
 
-    const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> getReplicatedPacketMapping() {
+    const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> GetReplicatedPacketMapping() {
         const static QHash<PacketTypeEnum::Value, PacketTypeEnum::Value> REPLICATED_PACKET_MAPPING {
             { PacketTypeEnum::Value::MicrophoneAudioNoEcho, PacketTypeEnum::Value::ReplicatedMicrophoneAudioNoEcho },
             { PacketTypeEnum::Value::MicrophoneAudioWithEcho, PacketTypeEnum::Value::ReplicatedMicrophoneAudioWithEcho },
@@ -133,7 +133,7 @@ public:
         return REPLICATED_PACKET_MAPPING;
     }
 
-    const static QSet<PacketTypeEnum::Value> getNonVerifiedPackets() {
+    const static QSet<PacketTypeEnum::Value> GetNonVerifiedPackets() {
         const static QSet<PacketTypeEnum::Value> NON_VERIFIED_PACKETS = QSet<PacketTypeEnum::Value>()
             << PacketTypeEnum::Value::NodeJsonStats
             << PacketTypeEnum::Value::EntityQuery
@@ -148,7 +148,7 @@ public:
         return NON_VERIFIED_PACKETS;
     }
 
-    const static QSet<PacketTypeEnum::Value> getNonSourcedPackets() {
+    const static QSet<PacketTypeEnum::Value> GetNonSourcedPackets() {
         const static QSet<PacketTypeEnum::Value> NON_SOURCED_PACKETS = QSet<PacketTypeEnum::Value>()
             << PacketTypeEnum::Value::StunResponse << PacketTypeEnum::Value::CreateAssignment
             << PacketTypeEnum::Value::RequestAssignment << PacketTypeEnum::Value::DomainServerRequireDTLS
@@ -171,7 +171,7 @@ public:
         return NON_SOURCED_PACKETS;
     }
 
-    const static QSet<PacketTypeEnum::Value> getDomainSourcedPackets() {
+    const static QSet<PacketTypeEnum::Value> GetDomainSourcedPackets() {
         const static QSet<PacketTypeEnum::Value> DOMAIN_SOURCED_PACKETS = QSet<PacketTypeEnum::Value>()
             << PacketTypeEnum::Value::AssetMappingOperation
             << PacketTypeEnum::Value::AssetGet
@@ -179,7 +179,7 @@ public:
         return DOMAIN_SOURCED_PACKETS;
     }
 
-    const static QSet<PacketTypeEnum::Value> getDomainIgnoredVerificationPackets() {
+    const static QSet<PacketTypeEnum::Value> GetDomainIgnoredVerificationPackets() {
         const static QSet<PacketTypeEnum::Value> DOMAIN_IGNORED_VERIFICATION_PACKETS = QSet<PacketTypeEnum::Value>()
             << PacketTypeEnum::Value::AssetMappingOperationReply
             << PacketTypeEnum::Value::AssetGetReply
@@ -191,7 +191,7 @@ public:
 using PacketType = PacketTypeEnum::Value;
 typedef char PacketVersion;
 
-PacketVersion versionForPacketType(PacketType packetType);
+PacketVersion VersionForPacketType(PacketType packetType);
 uint qHash(const PacketType& key, uint seed);
 
 // Due to the different legacy behaviour, we need special processing for domains that were created before
@@ -373,59 +373,58 @@ public:
     Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
 
-    static int headerSize(bool isPartOfMessage);
-    static int localHeaderSize(PacketType type);
-    int totalHeaderSize();
+    static int HeaderSize(bool is_part_of_message);
+    static int LocalHeaderSize(PacketType type);
+    int TotalHeaderSize();
 
-    static std::unique_ptr<Packet> create(uint32_t sequence, PacketType t, qint64 size = -1);
-    static std::unique_ptr<Packet> fromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
+    static std::unique_ptr<Packet> Create(uint32_t sequence, PacketType t, qint64 size = -1);
+    static std::unique_ptr<Packet> FromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
 
-    void obfuscate(ObfuscationLevel level);
+    void Obfuscate(ObfuscationLevel level);
 
-    void writeSourceID(quint16 sourceID);
-    void writeVerificationHash(HMACAuth * hmacAuth);
+    void WriteSourceID(quint16 s);
+    void WriteVerificationHash(HMACAuth * h);
 
-    void adjustPayloadStartAndCapacity(int headerSize, bool shouldDecreasePayloadSize = false);
+    void AdjustPayloadStartAndCapacity(int header_size, bool should_decrease_payload_size = false);
 
-    qint64 bytesLeftToRead() const { return payloadSize - pos();}
-    qint64 bytesAvailableForWrite() const { return payloadCapacity - pos();}
+    qint64 BytesLeftToRead() const { return payload_size - pos();}
+    qint64 BytesAvailableForWrite() const { return payload_capacity - pos();}
 
     bool reset();
-    qint64 writeData(const char* data, qint64 maxSize);
-    qint64 readData(char* dest, qint64 maxSize);
-    QByteArray readWithoutCopy(qint64 maxSize);
+    qint64 writeData(const char* data, qint64 max_size);
+    qint64 readData(char* dest, qint64 max_size);
 
-    qint64 writeString(const QString& string);
-    QString readString();
+    qint64 WriteString(const QString& string);
+    QString ReadString();
 
-    char* getData() { return packet.get(); }
-    const char* getData() const { return packet.get(); }
-    qint64 getDataSize() const { return (payloadStart - packet.get()) + payloadSize; }
+    char* GetData() { return packet.get(); }
+    const char* GetData() const { return packet.get(); }
+    qint64 GetDataSize() const { return (payload_start - packet.get()) + payload_size; }
 
-    PacketType getType() {return type;}
-    bool getIsPartOfMessage() const {return isPartOfMessage;}
-    uint32_t getSequenceNumber() {return sequenceNumber;}
+    PacketType GetType() {return type;}
+    bool GetIsPartOfMessage() const {return is_part_of_message;}
+    uint32_t GetSequenceNumber() {return sequence_number;}
 
-    static QByteArray hashForPacketAndHMAC(const Packet& packet, HMACAuth * hash);
+    static QByteArray HashForPacketAndHMAC(const Packet& packet, HMACAuth * hash);
 
 private:
     PacketType type;
     PacketVersion version;
 
-    qint64 packetSize;
-    qint64 payloadSize;
-    char * payloadStart;
-    qint64 payloadCapacity;
+    qint64 packet_size;
+    qint64 payload_size;
+    char * payload_start;
+    qint64 payload_capacity;
 
-    uint32_t obfuscationLevel;
-    bool isPartOfMessage;
-    bool isReliable;
-    uint32_t messageNumber;
-    short packetPosition;
-    uint32_t * messagePartNumber;
-    uint32_t sequenceNumber;
+    uint32_t obfuscation_level;
+    bool is_part_of_message;
+    bool is_reliable;
+    uint32_t message_number;
+    short packet_position;
+    uint32_t * message_part_number;
+    uint32_t sequence_number;
 
-    quint16 sourceID;
+    quint16 source_id;
 
     std::unique_ptr<char[]> packet;
 };

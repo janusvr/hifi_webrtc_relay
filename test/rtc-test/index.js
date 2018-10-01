@@ -1,4 +1,4 @@
-var signalServer = new WebSocket('ws://localhost:8888');
+var signalServer = new WebSocket('ws://localhost:8118');
 var domain_sendChannel;
 var audio_sendChannel;
 var avatar_sendChannel;
@@ -6,6 +6,8 @@ var entity_sendChannel;
 var entityscript_sendChannel;
 var messages_sendChannel;
 var asset_sendChannel;
+var remoteCandidates = [];
+var have_answer = false;
 
 signalServer.onopen = function (event) {
 
@@ -36,47 +38,54 @@ function iceCallback(event) {
 
 function domainMessage(event) {
     console.log('domain_server message ' + event.data);
-    domain_sendChannel.send('domain_message');
+    //domain_sendChannel.send('domain_message');
 }
 
 function audioMixerMessage(event) {
     console.log('audio message ' + event.data);
-    audio_sendChannel.send('audio_message');
+    //audio_sendChannel.send('audio_message');
 }
 
 function avatarMixerMessage(event) {
     console.log('avatar message ' + event.data);
-    avatar_sendChannel.send('avatar_message');
+    //avatar_sendChannel.send('avatar_message');
 }
 
 function entityServerMessage(event) {
     console.log('entity message ' + event.data);
-    entity_sendChannel.send('entity_message');
+    //entity_sendChannel.send('entity_message');
 }
 
 function entityScriptServerMessage(event) {
     console.log('entity script message ' + event.data);
-    entityscript_sendChannel.send('entity_script_message');
+    //entityscript_sendChannel.send('entity_script_message');
 }
 
 function messagesMixerMessage(event) {
     console.log('messages message ' + event.data);
-    messages_sendChannel.send('messages_message');
+    //messages_sendChannel.send('messages_message');
 }
 
 function assetServerMessage(event) {
     console.log('asset message ' + event.data);
-    asset_sendChannel.send('asset_message');
+    //asset_sendChannel.send('asset_message');
 }
 
 signalServer.onmessage = function (event) {
     if (event.data === 'connected')
     {
-        var servers = [{ "url": "stun:stun3.l.google.com:19302" }];
         pcConstraint = null;
         dataConstraint = null;
         console.log('Using SCTP based data channels');
-        window.localConnection = localConnection = new RTCPeerConnection(servers, pcConstraint);
+        window.localConnection = localConnection = new RTCPeerConnection({
+                                                                             iceServers: [{
+                                                                                 urls: [
+                                                                                   "stun:stun.l.google.com:19302",
+                                                                                   "stun:stun1.l.google.com:19302",
+                                                                                   "stun:stun2.l.google.com:19302",
+                                                                                   "stun:stun3.l.google.com:19302",
+                                                                                   "stun:stun4.l.google.com:19302"
+                                                                           ]}]}, pcConstraint);
         console.log('Created local peer connection object localConnection');
 
         domain_sendChannel = localConnection.createDataChannel('domain_server_dc', dataConstraint);
@@ -111,12 +120,25 @@ signalServer.onmessage = function (event) {
 
     switch (msg.type) {
         case 'candidate':
-            console.log("candidate");
-            localConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            if (msg.candidate) {
+                if (!have_answer) {
+                    remoteCandidates.push(msg.candidate);
+                } else {
+                    console.log("candidate");
+                    localConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                }
+            }
             break;
         case 'answer':
             console.log("answer");
-            localConnection.setRemoteDescription(new RTCSessionDescription(msg));
+            localConnection.setRemoteDescription(new RTCSessionDescription(msg))
+            .then(function () {
+              have_answer = true;
+              var i = 0;
+              for (i = 0; i < remoteCandidates.length; i++) {
+                  localConnection.addIceCandidate(new RTCIceCandidate(remoteCandidates[i]));
+              }
+            });
             break;
         default:
             console.log("unknown websocket message type");

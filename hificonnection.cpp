@@ -542,7 +542,7 @@ void HifiConnection::SendDomainIcePing()
         return;
     }
 
-    if (num_requests == 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
+    if (num_requests == 1000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
         qDebug() << "HifiConnection::SendDomainIcePing() - Stopping domain ice ping requests to" << Utils::GetDomainPlaceName();
 

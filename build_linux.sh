@@ -19,7 +19,7 @@ cmake .. -DDISABLE_SPDLOG=on
 make
 cd ..
 rm -rf ./lib/linux
-mkdir ./lib/linux
+mkdir -p ./lib/linux
 cp -v ./build/librtcdcpp.so ./lib/linux
 cd ../..
 

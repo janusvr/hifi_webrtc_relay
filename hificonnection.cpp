@@ -674,17 +674,20 @@ void HifiConnection::ClientMessageReceived(const QString &message)
         config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun3.l.google.com", 19302});
 
         std::function<void(rtcdcpp::PeerConnection::IceCandidate)> onLocalIceCandidate = [this](rtcdcpp::PeerConnection::IceCandidate candidate) {
-            QJsonObject candidate_object;
-            candidate_object.insert("type", QJsonValue::fromVariant("candidate"));
-            QJsonObject candidate_object2;
-            candidate_object2.insert("candidate", QJsonValue::fromVariant(QString::fromStdString(candidate.candidate)));
-            candidate_object2.insert("sdpMid", QJsonValue::fromVariant(QString::fromStdString(candidate.sdpMid)));
-            candidate_object2.insert("sdpMLineIndex", QJsonValue::fromVariant(candidate.sdpMLineIndex));
-            candidate_object.insert("candidate", candidate_object2);
-            QJsonDocument candidateDoc(candidate_object);
+            if (QString::fromStdString(candidate.candidate) != "")
+            {
+                QJsonObject candidate_object;
+                candidate_object.insert("type", QJsonValue::fromVariant("candidate"));
+                QJsonObject candidate_object2;
+                candidate_object2.insert("candidate", QJsonValue::fromVariant(QString::fromStdString(candidate.candidate)));
+                candidate_object2.insert("sdpMid", QJsonValue::fromVariant(QString::fromStdString(candidate.sdpMid)));
+                candidate_object2.insert("sdpMLineIndex", QJsonValue::fromVariant(candidate.sdpMLineIndex));
+                candidate_object.insert("candidate", candidate_object2);
+                QJsonDocument candidateDoc(candidate_object);
 
-            //qDebug() << "candidate: " << candidateDoc.toJson();
-            this->client_socket->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
+                //qDebug() << "candidate: " << candidateDoc.toJson();
+                this->client_socket->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
+            }
         };
 
         std::function<void(std::shared_ptr<rtcdcpp::DataChannel> channel)> onDataChannel = [this](std::shared_ptr<rtcdcpp::DataChannel> channel) {

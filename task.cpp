@@ -9,7 +9,7 @@ Task::Task(QObject * parent) :
 
     signaling_server = new QWebSocketServer(QStringLiteral("Signaling Server"), QWebSocketServer::NonSecureMode, this);
 
-    if (signaling_server->listen(QHostAddress::LocalHost, signaling_server_port)) {
+    if (signaling_server->listen(QHostAddress::Any, signaling_server_port)) {
         connect(signaling_server, &QWebSocketServer::newConnection, this, &Task::Connect);
         connect(signaling_server, &QWebSocketServer::closed, this, &Task::Disconnect);
     }

@@ -78,10 +78,12 @@ public:
 
     void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
 
-    void ActivatePublicSocket();
+    void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
 
     void StartPing();
     void Ping(quint8 ping_type);
+    void PingReply(Packet * packet);
+    void SetNegotiatedAudioFormat(bool b);
     void StartNegotiateAudioFormat();
 
     void SendMessageToServer(QString message) {node_socket->write(message.toLatin1());}
@@ -90,14 +92,14 @@ public:
     void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
     void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
 
+    bool CheckNodeAddress(QHostAddress a, quint16 p);
+
 Q_SIGNALS:
     void Disconnected();
 
 public Q_SLOTS:
     void SendNegotiateAudioFormat();
     void SendPing();
-    void RelayToClient();
-    void Disconnect();
 
 private:
     QUuid node_id;
@@ -113,11 +115,9 @@ private:
 
     quint16 domain_session_local_id;
 
-    bool connected;
-
     std::unique_ptr<HMACAuth> authenticate_hash;
 
-    QUdpSocket * node_socket;
+    QSharedPointer<QUdpSocket> node_socket;
 
     QTimer * ping_timer;
     QTimer * restart_ping_timer;

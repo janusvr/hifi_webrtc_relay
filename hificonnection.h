@@ -39,6 +39,11 @@ public:
     HifiConnection(QWebSocket * s);
     ~HifiConnection();
 
+    void UpdateLocalSocket();
+    QHostAddress GetGuessedLocalAddress();
+
+    void Stop();
+
     void MakeStunRequestPacket(char * stun_request_packet);
     void SendIcePing(quint8 ping_type);
     void SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port);
@@ -70,6 +75,9 @@ Q_SIGNALS:
 
 public Q_SLOTS:
 
+    void ConnectedForLocalSocketTest();
+    void ErrorTestingLocalSocket();
+
     void HifiConnect();
 
     void StartIce();
@@ -97,7 +105,9 @@ private:
         return uuid_string_no_braces;
     }
 
-    QUdpSocket * hifi_socket;
+    bool has_tcp_checked_local_socket;
+
+    QSharedPointer<QUdpSocket> hifi_socket;
     QTimer * hifi_ping_timer;
     QTimer * hifi_restart_ping_timer;
     QTimer * hifi_response_timer;

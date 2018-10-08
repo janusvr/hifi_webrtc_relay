@@ -174,7 +174,7 @@ QString Utils::GetHardwareAddress(QHostAddress local_addr)
 
     for (auto network_interface : QNetworkInterface::allInterfaces()) {
         for (auto interface_addresss : network_interface.addressEntries()) {
-            if (interface_addresss.ip() == local_addr) {
+            if (interface_addresss.ip().toIPv4Address() == local_addr.toIPv4Address()) {
                 // this is the interface whose local IP matches what we've detected the current IP to be
                 hardware_address = network_interface.hardwareAddress();
 

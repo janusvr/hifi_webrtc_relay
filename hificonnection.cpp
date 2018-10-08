@@ -2,6 +2,9 @@
 
 HifiConnection::HifiConnection(QWebSocket * s)
 {
+    has_tcp_checked_local_socket = false;
+    UpdateLocalSocket();
+
     connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(HifiConnect()));
 
     ice_client_id = QUuid::createUuid();
@@ -52,12 +55,125 @@ HifiConnection::HifiConnection(QWebSocket * s)
 
 HifiConnection::~HifiConnection()
 {
+
+}
+
+void HifiConnection::UpdateLocalSocket()
+{
+    // attempt to use Google's DNS to confirm that local IP
+    static const QHostAddress RELIABLE_LOCAL_IP_CHECK_HOST = QHostAddress { "8.8.8.8" };
+    static const int RELIABLE_LOCAL_IP_CHECK_PORT = 53;
+
+    QTcpSocket* localIPTestSocket = new QTcpSocket;
+
+    connect(localIPTestSocket, &QTcpSocket::connected, this, &HifiConnection::ConnectedForLocalSocketTest);
+    connect(localIPTestSocket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(ErrorTestingLocalSocket()));
+
+    // attempt to connect to our reliable host
+    localIPTestSocket->connectToHost(RELIABLE_LOCAL_IP_CHECK_HOST, RELIABLE_LOCAL_IP_CHECK_PORT);
+}
+
+void HifiConnection::ConnectedForLocalSocketTest()
+{
+    auto local_ip_test_socket = qobject_cast<QTcpSocket*>(sender());
+
+    if (local_ip_test_socket) {
+        auto local_host_address = local_ip_test_socket->localAddress();
+
+        if (local_host_address.protocol() == QAbstractSocket::IPv4Protocol) {
+            local_address = local_host_address;
+
+            //qDebug() << "HifiConnection::connectedForLocalSocketTest() - Local address: " << local_address;
+
+            has_tcp_checked_local_socket = true;
+        }
+
+        local_ip_test_socket->deleteLater();
+    }
+}
+
+void HifiConnection::ErrorTestingLocalSocket()
+{
+    auto local_ip_test_socket = qobject_cast<QTcpSocket*>(sender());
+
+    if (local_ip_test_socket) {
+
+        // error connecting to the test socket - if we've never set our local socket using this test socket
+        // then use our possibly updated guessed local address as fallback
+        if (!has_tcp_checked_local_socket) {
+            local_address = GetGuessedLocalAddress();
+
+            //qDebug() << "HifiConnection::errorTestingLocalSocket() - Local address: " << local_address;
+
+            has_tcp_checked_local_socket = true;
+        }
+
+        local_ip_test_socket->deleteLater();;
+    }
+}
+
+
+QHostAddress HifiConnection::GetGuessedLocalAddress()
+{
+    QHostAddress address;
+
+    for (int i= 0; i < QNetworkInterface::allInterfaces().size(); i++) {
+        QNetworkInterface network_interface = QNetworkInterface::allInterfaces()[i];
+        if (network_interface.flags() & QNetworkInterface::IsUp
+            && network_interface.flags() & QNetworkInterface::IsRunning
+            && network_interface.flags() & ~QNetworkInterface::IsLoopBack) {
+            // we've decided that this is the active NIC
+            // enumerate it's addresses to grab the IPv4 address
+            for (int j = 0; network_interface.addressEntries().size(); j++) {
+                // make sure it's an IPv4 address that isn't the loopback
+                QNetworkAddressEntry entry = network_interface.addressEntries()[j];
+                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol && !entry.ip().isLoopback()) {
+
+                    // set our localAddress and break out
+                    address = entry.ip();
+                    //qDebug() << "HifiConnection::getGuessedLocalAddress() - " << address;
+                    break;
+                }
+            }
+        }
+
+        if (!address.isNull()) {
+            break;
+        }
+    }
+
+    has_tcp_checked_local_socket = true;
+
+    // return the looked up local address
+    return address;
+}
+
+void HifiConnection::Stop()
+{
+    if (asset_server) delete asset_server;
+    if (audio_mixer) delete audio_mixer;
+    if (messages_mixer) delete messages_mixer;
+    if (avatar_mixer) delete avatar_mixer;
+    if (entity_script_server) delete entity_script_server;
+    if (entity_server) delete entity_server;
+
     if (client_socket) {
         client_socket->close();
     }
 
     if (hifi_socket) {
         hifi_socket->close();
+    }
+
+    if (hifi_ping_timer)
+    {
+        delete hifi_ping_timer;
+        hifi_ping_timer = NULL;
+    }
+    if (hifi_restart_ping_timer)
+    {
+        delete hifi_restart_ping_timer;
+        hifi_restart_ping_timer = NULL;
     }
 }
 
@@ -68,12 +184,12 @@ void HifiConnection::HifiConnect()
 
 void HifiConnection::StartStun()
 {
-    hifi_socket = new QUdpSocket(this);
+    hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
 
     num_requests = 0;
     has_completed_current_request = false;
 
-    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
+    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
 
     hifi_response_timer = new QTimer { this };
     connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
@@ -84,8 +200,8 @@ void HifiConnection::StartStun()
 
 void HifiConnection::StartIce()
 {
-    disconnect(hifi_socket, SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
-    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
+    disconnect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
+    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
 
     num_requests = 0;
     has_completed_current_request = false;
@@ -106,12 +222,12 @@ void HifiConnection::StartDomainIcePing()
 
 void HifiConnection::StartDomainConnect()
 {
-    disconnect(hifi_socket, SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
-    connect(hifi_socket, SIGNAL(readyRead()), this, SLOT(ParseDomainResponse()));
+    disconnect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
+    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseDomainResponse()));
 
     disconnect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
 
-    connect(hifi_socket, SIGNAL(disconnected()), this, SLOT(ServerDisconnected()));
+    connect(hifi_socket.data(), SIGNAL(disconnected()), this, SLOT(ServerDisconnected()));
 
     // Register Domain Server DC callbacks here
     std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
@@ -210,7 +326,6 @@ void HifiConnection::ParseStunResponse()
                     qDebug() << "HifiConnection::ParseStunResponse() - Public address: " << public_address;
                     qDebug() << "HifiConnection::ParseStunResponse() - Public port: " << public_port;
 
-                    local_address = hifi_socket->localAddress();
                     local_port = hifi_socket->localPort();
 
                     qDebug() << "HifiConnection::ParseStunResponse() - Local address: " << local_address;
@@ -286,12 +401,13 @@ void HifiConnection::ParseDomainResponse()
 
         std::unique_ptr<Packet> domain_response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
         //qDebug() << "HifiConnection::ParseDomainResponse() - Packet type" << (int) domain_response_packet->GetType();
-        sequence_number = domain_response_packet->GetSequenceNumber();
         if (domain_response_packet->GetType() == PacketType::ICEPing) {
             //qDebug() << "HifiConnection::ParseDomainResponse() - Send ping reply";
+            sequence_number = domain_response_packet->GetSequenceNumber();
             SendIcePingReply(domain_response_packet.get(), sender, sender_port);
         }
         else if (domain_response_packet->GetType() == PacketType::ICEPingReply) {
+            sequence_number = domain_response_packet->GetSequenceNumber();
             //qDebug() << "HifiConnection::ParseDomainResponse() - Process ping reply";
         }
         else if (domain_response_packet->GetType() == PacketType::DomainList) {
@@ -355,9 +471,56 @@ void HifiConnection::ParseDomainResponse()
 
             qDebug() << "HifiConnection::ParseDomainResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
         }
+        else if (domain_response_packet->GetType() == PacketType::Ping) {
+            Node * node = nullptr;
+            if (audio_mixer->CheckNodeAddress(sender, sender_port))
+                node = audio_mixer;
+            else if (avatar_mixer->CheckNodeAddress(sender, sender_port))
+                node = avatar_mixer;
+            else if (asset_server->CheckNodeAddress(sender, sender_port))
+                node = asset_server;
+            else if (messages_mixer->CheckNodeAddress(sender, sender_port))
+                node = messages_mixer;
+            else if (entity_script_server->CheckNodeAddress(sender, sender_port))
+                node = entity_script_server;
+            else if (entity_server->CheckNodeAddress(sender, sender_port))
+                node = entity_server;
+
+            if (node){
+                //qDebug() << "Node::RelayToClient() - Send ping reply";
+                node->PingReply(domain_response_packet.get());
+            }
+        }
+        else if (domain_response_packet->GetType() == PacketType::SelectedAudioFormat) {
+            qDebug() << "Node::RelayToClient() - Negotiated audio format" << domain_response_packet->ReadString();
+
+            if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
+                audio_mixer->SetNegotiatedAudioFormat(true);
+                audio_mixer->SendMessageToClient(datagram);
+            }
+        }
+        else if (domain_response_packet->GetType() == PacketType::PingReply) {
+            //qDebug() << "Node::RelayToClient() - " << sender << sender_port;
+            if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
+                audio_mixer->StartNegotiateAudioFormat();
+            }
+        }
         else {
-            // Send any other types of packets from the domain server to the client
-            SendDomainServerDCMessage(datagram);
+            // Send any other types of packets to the client
+            if (audio_mixer->CheckNodeAddress(sender, sender_port))
+                audio_mixer->SendMessageToClient(datagram);
+            else if (avatar_mixer->CheckNodeAddress(sender, sender_port))
+                avatar_mixer->SendMessageToClient(datagram);
+            else if (asset_server->CheckNodeAddress(sender, sender_port))
+                asset_server->SendMessageToClient(datagram);
+            else if (messages_mixer->CheckNodeAddress(sender, sender_port))
+                messages_mixer->SendMessageToClient(datagram);
+            else if (entity_script_server->CheckNodeAddress(sender, sender_port))
+                entity_script_server->SendMessageToClient(datagram);
+            else if (entity_server->CheckNodeAddress(sender, sender_port))
+                entity_server->SendMessageToClient(datagram);
+            else
+                SendDomainServerDCMessage(datagram);
         }
     }
     return;
@@ -365,7 +528,7 @@ void HifiConnection::ParseDomainResponse()
 
 void HifiConnection::SendStunRequest()
 {
-    if (!Utils::GetFinishedDomainIDRequest()) {
+    if (!Utils::GetFinishedDomainIDRequest() || !has_tcp_checked_local_socket) {
         return;
     }
 
@@ -522,7 +685,7 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
     // and always have their public socket as their active socket
     //if (node->GetType() == NodeType::downstreamType(_ownerType) || node->GetType() == NodeType::upstreamType(_ownerType)) {
     //    node->setLastHeardMicrostamp(usecTimestampNow());
-        node->ActivatePublicSocket();
+        node->ActivatePublicSocket(hifi_socket);
         //node->sendPing();
     //}
 }
@@ -536,7 +699,7 @@ void HifiConnection::SendDomainIcePing()
     if (num_ping_requests >= 500 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
         if (num_ping_requests > 500 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
-        qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << Utils::GetDomainPlaceName();
+        //qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << Utils::GetDomainPlaceName();
 
         hifi_ping_timer->stop();
         ++num_ping_requests;
@@ -591,7 +754,7 @@ void HifiConnection::SendDomainConnectRequest()
 
     //qDebug() << ice_client_id << protocol_version_sig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
     //         << public_address << public_port << local_address << local_port << node_types_of_interest << Utils::GetDomainPlaceName();
-    domain_connect_data_stream << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint()
+    domain_connect_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint()
                             << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << Utils::GetDomainPlaceName(); //TODO: user_name_signature
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
@@ -678,7 +841,8 @@ void HifiConnection::ClientMessageReceived(const QString &message)
                 QJsonDocument candidateDoc(candidate_object);
 
                 //qDebug() << "candidate: " << candidateDoc.toJson();
-                this->client_socket->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
+                if (this->client_socket)
+                    this->client_socket->sendTextMessage(QString::fromStdString(candidateDoc.toJson().toStdString()));
             }
         };
 
@@ -729,7 +893,8 @@ void HifiConnection::ClientMessageReceived(const QString &message)
         QJsonDocument answerDoc(answer_object);
 
         //qDebug() << "Sending Answer: " << answerDoc.toJson();
-        client_socket->sendTextMessage(QString::fromStdString(answerDoc.toJson().toStdString()));
+        if (this->client_socket)
+            client_socket->sendTextMessage(QString::fromStdString(answerDoc.toJson().toStdString()));
     }
     else if (type == "candidate")
     {

@@ -164,7 +164,8 @@ void Task::DisconnectHifiConnection()
     HifiConnection *s = qobject_cast<HifiConnection *>(sender());
     if (hifi_connections.contains(s)) {
         hifi_connections.removeAll(s);
-        qDebug () << "Task::DisconnectHifiConnection()" << s;
+        qDebug() << "Task::DisconnectHifiConnection()" << s;
+        s->Stop();
         delete s;
     }
 }

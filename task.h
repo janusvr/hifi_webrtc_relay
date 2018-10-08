@@ -41,6 +41,7 @@ public:
     ~Task();
 
     void ProcessCommandLineArguments(int argc, char * argv[]);
+    void HandleLookupResult(const QHostInfo& hostInfo, QString addr_type);
 
 public Q_SLOTS:
 

@@ -41,7 +41,7 @@ public:
 
     void MakeStunRequestPacket(char * stun_request_packet);
     void SendIcePing(quint8 ping_type);
-    void SendIcePingReply(Packet * ice_ping);
+    void SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port);
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
@@ -57,8 +57,8 @@ public:
         return (domain_server_dc && audio_mixer_dc && avatar_mixer_dc && messages_mixer_dc && entity_server_dc && entity_script_server_dc && asset_server_dc);
     }
 
-    void SendDomainServerMessage(QString message) {hifi_socket->write(message.toLatin1());}
-    void SendDomainServerMessage(QByteArray message) {hifi_socket->write(message);}
+    void SendDomainServerMessage(QString message) {hifi_socket->writeDatagram(message.toLatin1(), domain_public_address, domain_public_port);}
+    void SendDomainServerMessage(QByteArray message) {hifi_socket->writeDatagram(message, domain_public_address, domain_public_port);}
 
     void SendDomainServerDCMessage(QString message) {domain_server_dc->SendString(message.toStdString());}
     void SendDomainServerDCMessage(QByteArray message) {domain_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
@@ -99,6 +99,7 @@ private:
 
     QUdpSocket * hifi_socket;
     QTimer * hifi_ping_timer;
+    QTimer * hifi_restart_ping_timer;
     QTimer * hifi_response_timer;
 
     QHostAddress public_address;
@@ -111,6 +112,7 @@ private:
     bool has_completed_current_request;
     bool domain_connected;
     uint32_t num_requests;
+    uint32_t num_ping_requests;
 
     QHostAddress domain_public_address;
     quint16 domain_public_port;
@@ -121,7 +123,6 @@ private:
     NodeSet node_types_of_interest;
 
     bool started_domain_connect;
-    uint32_t sequence_number;
 
     QUuid session_id;
     quint16 local_id;

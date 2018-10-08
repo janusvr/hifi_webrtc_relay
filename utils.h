@@ -13,7 +13,7 @@ const int NUM_BYTES_STUN_HEADER = 20;
 
 const quint16 DEFAULT_DOMAIN_SERVER_PORT = 40102;
 const int HIFI_INITIAL_UPDATE_INTERVAL_MSEC = 250;
-const int HIFI_PING_UPDATE_INTERVAL_MSEC = 100;
+const int HIFI_PING_UPDATE_INTERVAL_MSEC = 25;
 const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
 const int NUM_BYTES_RFC4122_UUID = 16;
 
@@ -42,6 +42,8 @@ public:
 
     static QString GetStunServerHostname() {return stun_server_hostname;}
     static void SetStunServerHostname(QString h) {stun_server_hostname = h;}
+    static QHostAddress GetStunServerAddress() {return stun_server_address;}
+    static void SetStunServerAddress(QHostAddress h) {stun_server_address = h;}
     static quint16 GetStunServerPort() {return stun_server_port;}
     static void SetStunServerPort(quint16 p) {stun_server_port = p;}
 
@@ -70,6 +72,7 @@ private:
     static QUuid domain_id;
 
     static QString stun_server_hostname;
+    static QHostAddress stun_server_address;
     static quint16 stun_server_port;
 
     static bool use_custom_ice_server;

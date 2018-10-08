@@ -7,6 +7,15 @@ Node::Node()
     num_requests = 0;
     started_negotiating_audio_format = false;
     negotiated_audio_format = false;
+
+    restart_ping_timer = new QTimer { this };
+    restart_ping_timer->setInterval(1000); // 250ms, Qt::CoarseTimer acceptable
+    connect(restart_ping_timer, &QTimer::timeout, this, &Node::StartPing);
+    restart_ping_timer->setSingleShot(true);
+
+    ping_timer = new QTimer { this };
+    connect(ping_timer, &QTimer::timeout, this, &Node::SendPing);
+    ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 }
 
 Node::~Node()
@@ -75,13 +84,10 @@ void Node::SetPermissions(Permissions p)
     permissions = p;
 }
 
-void Node::ActivatePublicSocket(QHostAddress l, quint16 p)
+void Node::ActivatePublicSocket()
 {
     node_socket = new QUdpSocket(this);
     connect(node_socket, SIGNAL(disconnected()), this, SLOT(Disconnect()));
-    node_socket->bind(l,p,QAbstractSocket::ShareAddress);
-    node_socket->connectToHost(public_address, public_port, QIODevice::ReadWrite);
-    node_socket->waitForConnected();
 
     connect(node_socket, SIGNAL(readyRead()), this, SLOT(RelayToClient()));
 
@@ -91,9 +97,7 @@ void Node::ActivatePublicSocket(QHostAddress l, quint16 p)
 void Node::StartPing()
 {
     // start the ping timer for this node
-    ping_timer = new QTimer { this };
-    connect(ping_timer, &QTimer::timeout, this, &Node::SendPing);
-    ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+    num_ping_requests = 0;
     ping_timer->start();
 }
 
@@ -111,30 +115,27 @@ void Node::StartNegotiateAudioFormat()
 
 void Node::SendPing()
 {
-
-    if (num_requests == 1000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
+    if (num_ping_requests == 500 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
-        qDebug() << "HifiConnection::SendDomainIcePing() - Stopping domain ice ping requests to" << Utils::GetDomainPlaceName();
+        if (num_ping_requests > 500 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
+        qDebug() << "Node::SendPing() - Restarting ping requests to" << (char) GetNodeType();
 
         ping_timer->stop();
-        ping_timer->deleteLater();
-        return;
-    }
-
-    if (connected)
-    {
-        qDebug() << "Node::SendPing() - Stopping pings to node: " << (char) node_type;
-        ping_timer->stop();
-        ping_timer->deleteLater();
-
+        ++num_ping_requests;
+        restart_ping_timer->start();
         return;
     }
     else
     {
-        ++num_requests;
+        ++num_ping_requests;
     }
 
-    quint8 ping_type = 2;
+    Ping(1);
+    Ping(2);
+}
+
+void Node::Ping(quint8 ping_type)
+{
     quint64 timestamp = Utils::GetTimestamp(); // in usec
     int64_t connection_id = 0;
 
@@ -150,7 +151,7 @@ void Node::SendPing()
     ping_packet->WriteVerificationHash(authenticate_hash.get());
 
     //qDebug() << "Node::SendPing() - Pinging to node: " << (char) node_type << ping_type << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << ping_packet->GetDataSize();
-    node_socket->write(ping_packet->GetData(), ping_packet->GetDataSize());
+    node_socket->writeDatagram(ping_packet->GetData(), ping_packet->GetDataSize(), (ping_type == 1)?local_address:public_address, (ping_type == 1)?local_port:public_port);
 }
 
 void Node::SendNegotiateAudioFormat()
@@ -183,7 +184,7 @@ void Node::SendNegotiateAudioFormat()
     negotiate_format_packet->WriteSourceID(domain_session_local_id);
     negotiate_format_packet->WriteVerificationHash(authenticate_hash.get());
 
-    node_socket->write(negotiate_format_packet->GetData(), negotiate_format_packet->GetDataSize());
+    node_socket->writeDatagram(negotiate_format_packet->GetData(), negotiate_format_packet->GetDataSize(), public_address, public_port);
 }
 
 void Node::RelayToClient()
@@ -199,7 +200,6 @@ void Node::RelayToClient()
         //qDebug() << "Node::RelayToClient() - " << (char) node_type << (int) response_packet->GetType() << sender << sender_port;
         if (response_packet->GetType() == PacketType::Ping) {
             //qDebug() << "Node::RelayToClient() - Send ping reply";
-
             const char * message = response_packet->readAll().constData();
 
             quint8 type_from_original_ping;
@@ -219,7 +219,7 @@ void Node::RelayToClient()
             reply_packet->WriteVerificationHash(authenticate_hash.get());
 
             //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << response_packet->GetSequenceNumber() << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
-            node_socket->write(reply_packet->GetData(), reply_packet->GetDataSize());
+            node_socket->writeDatagram(reply_packet->GetData(), reply_packet->GetDataSize(), sender, sender_port);
         }
         else if (response_packet->GetType() == PacketType::SelectedAudioFormat) {
             negotiated_audio_format = true;

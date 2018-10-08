@@ -22,6 +22,7 @@ QString Utils::domain_place_name = "";
 QUuid Utils::domain_id = QUuid();
 bool Utils::finished_domain_id_request = false;
 QString Utils::stun_server_hostname = "stun.highfidelity.io";
+QHostAddress Utils::stun_server_address = QHostAddress();
 quint16 Utils::stun_server_port = 3478;
 QString Utils::ice_server_hostname = "ice.highfidelity.com"; //"dev-ice.highfidelity.com";
 QHostAddress Utils::ice_server_address = QHostAddress();

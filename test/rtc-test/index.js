@@ -72,53 +72,51 @@ function assetServerMessage(event) {
 }
 
 signalServer.onmessage = function (event) {
-    if (event.data === 'connected')
-    {
-        pcConstraint = null;
-        dataConstraint = null;
-        console.log('Using SCTP based data channels');
-        window.localConnection = localConnection = new RTCPeerConnection({
-                                                                             iceServers: [{
-                                                                                 urls: [
-                                                                                   "stun:stun.l.google.com:19302",
-                                                                                   "stun:stun1.l.google.com:19302",
-                                                                                   "stun:stun2.l.google.com:19302",
-                                                                                   "stun:stun3.l.google.com:19302",
-                                                                                   "stun:stun4.l.google.com:19302"
-                                                                           ]}]}, pcConstraint);
-        console.log('Created local peer connection object localConnection');
-
-        domain_sendChannel = localConnection.createDataChannel('domain_server_dc', dataConstraint);
-        domain_sendChannel.onmessage = domainMessage;
-        audio_sendChannel = localConnection.createDataChannel('audio_mixer_dc', dataConstraint);
-        audio_sendChannel.onmessage = audioMixerMessage;
-        avatar_sendChannel = localConnection.createDataChannel('avatar_mixer_dc', dataConstraint);
-        avatar_sendChannel.onmessage = avatarMixerMessage;
-        entity_sendChannel = localConnection.createDataChannel('entity_server_dc', dataConstraint);
-        entity_sendChannel.onmessage = entityServerMessage;
-        entityscript_sendChannel = localConnection.createDataChannel('entity_script_server_dc', dataConstraint);
-        entityscript_sendChannel.onmessage = entityScriptServerMessage;
-        messages_sendChannel = localConnection.createDataChannel('messages_mixer_dc', dataConstraint);
-        messages_sendChannel.onmessage = messagesMixerMessage;
-        asset_sendChannel = localConnection.createDataChannel('asset_server_dc', dataConstraint);
-        asset_sendChannel.onmessage = assetServerMessage;
-
-        console.log('Created send data channel');
-
-        localConnection.onicecandidate = iceCallback;
-
-        localConnection.createOffer().then(
-            gotDescription,
-            null
-        );
-
-        return;
-    }
 
     var msg = JSON.parse(event.data);
     console.log("message");
 
     switch (msg.type) {
+        case 'connected':
+            pcConstraint = null;
+            dataConstraint = null;
+            console.log('Using SCTP based data channels');
+            window.localConnection = localConnection = new RTCPeerConnection({
+                                                                                 iceServers: [{
+                                                                                     urls: [
+                                                                                       "stun:stun.l.google.com:19302",
+                                                                                       "stun:stun1.l.google.com:19302",
+                                                                                       "stun:stun2.l.google.com:19302",
+                                                                                       "stun:stun3.l.google.com:19302",
+                                                                                       "stun:stun4.l.google.com:19302"
+                                                                               ]}]}, pcConstraint);
+            console.log('Created local peer connection object localConnection');
+
+            domain_sendChannel = localConnection.createDataChannel('domain_server_dc', dataConstraint);
+            domain_sendChannel.onmessage = domainMessage;
+            audio_sendChannel = localConnection.createDataChannel('audio_mixer_dc', dataConstraint);
+            audio_sendChannel.onmessage = audioMixerMessage;
+            avatar_sendChannel = localConnection.createDataChannel('avatar_mixer_dc', dataConstraint);
+            avatar_sendChannel.onmessage = avatarMixerMessage;
+            entity_sendChannel = localConnection.createDataChannel('entity_server_dc', dataConstraint);
+            entity_sendChannel.onmessage = entityServerMessage;
+            entityscript_sendChannel = localConnection.createDataChannel('entity_script_server_dc', dataConstraint);
+            entityscript_sendChannel.onmessage = entityScriptServerMessage;
+            messages_sendChannel = localConnection.createDataChannel('messages_mixer_dc', dataConstraint);
+            messages_sendChannel.onmessage = messagesMixerMessage;
+            asset_sendChannel = localConnection.createDataChannel('asset_server_dc', dataConstraint);
+            asset_sendChannel.onmessage = assetServerMessage;
+
+            console.log('Created send data channel');
+
+            localConnection.onicecandidate = iceCallback;
+
+            localConnection.createOffer().then(
+                gotDescription,
+                null
+            );
+
+            break;
         case 'candidate':
             if (msg.candidate) {
                 if (!have_answer) {

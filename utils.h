@@ -42,6 +42,8 @@ public:
 
     static QString GetStunServerHostname() {return stun_server_hostname;}
     static void SetStunServerHostname(QString h) {stun_server_hostname = h;}
+    static QHostAddress GetStunServerAddress() {return stun_server_address;}
+    static void SetStunServerAddress(QHostAddress h) {stun_server_address = h;}
     static quint16 GetStunServerPort() {return stun_server_port;}
     static void SetStunServerPort(quint16 p) {stun_server_port = p;}
 
@@ -70,6 +72,7 @@ private:
     static QUuid domain_id;
 
     static QString stun_server_hostname;
+    static QHostAddress stun_server_address;
     static quint16 stun_server_port;
 
     static bool use_custom_ice_server;

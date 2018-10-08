@@ -7,9 +7,19 @@ Task::Task(QObject * parent) :
     Utils::SetupTimestamp();
     Utils::SetupProtocolVersionSignature();
 
+    qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << Utils::GetStunServerHostname();
+    QHostInfo result_stun = QHostInfo::fromName(Utils::GetStunServerHostname());
+    HandleLookupResult(result_stun, "stun");
+    qDebug() << "Task::Task() - STUN server IP address: " << Utils::GetStunServerHostname();
+
+    qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << Utils::GetIceServerHostname();
+    QHostInfo result_ice = QHostInfo::fromName(Utils::GetIceServerHostname());
+    HandleLookupResult(result_ice, "ice");
+    qDebug() << "Task::Task() - ICE server IP address: " << Utils::GetIceServerHostname();
+
     signaling_server = new QWebSocketServer(QStringLiteral("Signaling Server"), QWebSocketServer::NonSecureMode, this);
 
-    if (signaling_server->listen(QHostAddress::LocalHost, signaling_server_port)) {
+    if (signaling_server->listen(QHostAddress::Any, signaling_server_port)) {
         connect(signaling_server, &QWebSocketServer::newConnection, this, &Task::Connect);
         connect(signaling_server, &QWebSocketServer::closed, this, &Task::Disconnect);
     }
@@ -66,6 +76,27 @@ void Task::run()
 
     // Application runs indefinitely (until terminated - e.g. Ctrl+C)
     //    Q_EMIT finished();
+}
+
+void Task::HandleLookupResult(const QHostInfo& hostInfo, QString addr_type)
+{
+    if (hostInfo.error() != QHostInfo::NoError) {
+        qDebug() << "Task::handleLookupResult() - Lookup failed for" << hostInfo.lookupId() << ":" << hostInfo.errorString();
+    } else {
+        for (int i = 0; i < hostInfo.addresses().size(); i++) {
+            // just take the first IPv4 address
+            QHostAddress address = hostInfo.addresses()[i];
+            if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+
+                if (addr_type == "stun") Utils::SetStunServerAddress(address);
+                else if (addr_type == "ice") Utils::SetIceServerAddress(address);
+
+                qDebug() << "Task::handleLookupResult() - QHostInfo lookup result for"
+                    << hostInfo.hostName() << "with lookup ID" << hostInfo.lookupId() << "is" << address.toString();
+                break;
+            }
+        }
+    }
 }
 
 void Task::DomainRequestFinished()

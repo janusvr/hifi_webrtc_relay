@@ -78,9 +78,10 @@ public:
 
     void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
 
-    void ActivatePublicSocket(QHostAddress l, quint16 p);
+    void ActivatePublicSocket();
 
     void StartPing();
+    void Ping(quint8 ping_type);
     void StartNegotiateAudioFormat();
 
     void SendMessageToServer(QString message) {node_socket->write(message.toLatin1());}
@@ -119,11 +120,13 @@ private:
     QUdpSocket * node_socket;
 
     QTimer * ping_timer;
+    QTimer * restart_ping_timer;
     QTimer * hifi_response_timer;
 
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;
     int num_requests;
+    int num_ping_requests;
 
     std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 };

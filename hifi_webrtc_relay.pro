@@ -38,7 +38,7 @@ INCLUDEPATH +="./resources/librtcdcpp/include"
 unix:!macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/linux" -lrtcdcpp
 unix:macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/mac" -lrtcdcpp
 
-INCLUDEPATH +="./resources/openssl/include"
+win32:INCLUDEPATH +="./resources/openssl/include"
 win32:LIBS += -L"$$PWD/resources/openssl/x64/lib" -llibcrypto -llibssl
 win32:OPENSSL_LIBS ='-L"$$PWD/resources/openssl/x64/lib" -llibcrypto -llibssl'
 

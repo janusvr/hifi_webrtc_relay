@@ -123,6 +123,7 @@ private:
     NodeSet node_types_of_interest;
 
     bool started_domain_connect;
+    uint32_t sequence_number;
 
     QUuid session_id;
     quint16 local_id;

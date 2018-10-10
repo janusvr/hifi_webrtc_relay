@@ -29,6 +29,7 @@ Task::~Task()
 {
     for (int i = 0; i < hifi_connections.size(); i++)
     {
+        hifi_connections[i]->Stop();
         delete hifi_connections[i];
     }
     signaling_server->close();
@@ -166,6 +167,6 @@ void Task::DisconnectHifiConnection()
         hifi_connections.removeAll(s);
         qDebug() << "Task::DisconnectHifiConnection()" << s;
         s->Stop();
-        delete s;
+        //delete s;
     }
 }

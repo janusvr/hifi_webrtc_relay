@@ -124,9 +124,9 @@ void Node::StartNegotiateAudioFormat()
 
 void Node::SendPing()
 {
-    if (num_ping_requests == 500 / HIFI_PING_UPDATE_INTERVAL_MSEC)
+    if (num_ping_requests == 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
-        if (num_ping_requests > 500 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
+        if (num_ping_requests > 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
         //qDebug() << "Node::SendPing() - Restarting ping requests to" << (char) GetNodeType();
 
         ping_timer->stop();
@@ -139,7 +139,7 @@ void Node::SendPing()
         ++num_ping_requests;
     }
 
-    Ping(1);
+    //Ping(1);
     Ping(2);
 }
 
@@ -182,7 +182,7 @@ void Node::PingReply(Packet * packet)
     reply_packet->WriteSourceID(domain_session_local_id);
     reply_packet->WriteVerificationHash(authenticate_hash.get());
 
-    //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << response_packet->GetSequenceNumber() << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
+    //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
     node_socket->writeDatagram(reply_packet->GetData(), reply_packet->GetDataSize(), public_address, public_port);
 }
 

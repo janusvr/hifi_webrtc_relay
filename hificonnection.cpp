@@ -715,9 +715,9 @@ void HifiConnection::SendDomainIcePing()
         return;
     }
 
-    if (num_ping_requests >= 500 / HIFI_PING_UPDATE_INTERVAL_MSEC)
+    if (num_ping_requests >= 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
-        if (num_ping_requests > 500 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
+        if (num_ping_requests > 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
         //qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << Utils::GetDomainPlaceName();
 
         hifi_ping_timer->stop();
@@ -732,7 +732,7 @@ void HifiConnection::SendDomainIcePing()
     }
 
     // send the ping packet to the local and public sockets for this node
-    SendIcePing((quint8) 1);
+    //SendIcePing((quint8) 1);
     SendIcePing((quint8) 2);
 }
 
@@ -813,7 +813,6 @@ void HifiConnection::SendIcePing(quint8 ping_type)
     ice_ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
 
     hifi_socket->writeDatagram(ice_ping_packet->GetData(), ice_ping_packet->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
-
 }
 
 void HifiConnection::SendIcePingReply(Packet * ice_ping)

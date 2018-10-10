@@ -7,6 +7,8 @@ Node::Node()
     started_negotiating_audio_format = false;
     negotiated_audio_format = false;
 
+    sequence_number = 0;
+
     restart_ping_timer = new QTimer { this };
     restart_ping_timer->setInterval(1000); // 250ms, Qt::CoarseTimer acceptable
     connect(restart_ping_timer, &QTimer::timeout, this, &Node::StartPing);
@@ -148,7 +150,7 @@ void Node::Ping(quint8 ping_type)
 
     int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(int64_t);
 
-    std::unique_ptr<Packet> ping_packet = Packet::Create(0, PacketType::Ping, packet_size);
+    std::unique_ptr<Packet> ping_packet = Packet::Create(sequence_number, PacketType::Ping, packet_size);
 
     ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
     ping_packet->write(reinterpret_cast<const char*>(&timestamp), sizeof(timestamp));
@@ -172,7 +174,7 @@ void Node::PingReply(Packet * packet)
     //qDebug() << type_from_original_ping << time_from_original_ping << time_now;
 
     int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(quint64);
-    auto reply_packet = Packet::Create(packet->GetSequenceNumber(), PacketType::PingReply, packet_size);
+    auto reply_packet = Packet::Create(sequence_number, PacketType::PingReply, packet_size);
     reply_packet->write(reinterpret_cast<const char*>(&type_from_original_ping), sizeof(type_from_original_ping));
     reply_packet->write(reinterpret_cast<const char*>(&time_from_original_ping), sizeof(time_from_original_ping));
     reply_packet->write(reinterpret_cast<const char*>(&time_now), sizeof(time_now));

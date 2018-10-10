@@ -404,7 +404,7 @@ void HifiConnection::ParseDomainResponse()
         if (domain_response_packet->GetType() == PacketType::ICEPing) {
             //qDebug() << "HifiConnection::ParseDomainResponse() - Send ping reply";
             sequence_number = domain_response_packet->GetSequenceNumber();
-            SendIcePingReply(domain_response_packet.get(), sender, sender_port);
+            SendIcePingReply(domain_response_packet.get());
         }
         else if (domain_response_packet->GetType() == PacketType::ICEPingReply) {
             sequence_number = domain_response_packet->GetSequenceNumber();
@@ -488,6 +488,7 @@ void HifiConnection::ParseDomainResponse()
 
             if (node){
                 //qDebug() << "Node::RelayToClient() - Send ping reply";
+                node->SetSequenceNumber(domain_response_packet->GetSequenceNumber());
                 node->PingReply(domain_response_packet.get());
             }
         }
@@ -500,9 +501,27 @@ void HifiConnection::ParseDomainResponse()
             }
         }
         else if (domain_response_packet->GetType() == PacketType::PingReply) {
-            //qDebug() << "Node::RelayToClient() - " << sender << sender_port;
-            if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
-                audio_mixer->StartNegotiateAudioFormat();
+            Node * node = nullptr;
+            if (audio_mixer->CheckNodeAddress(sender, sender_port))
+                node = audio_mixer;
+            else if (avatar_mixer->CheckNodeAddress(sender, sender_port))
+                node = avatar_mixer;
+            else if (asset_server->CheckNodeAddress(sender, sender_port))
+                node = asset_server;
+            else if (messages_mixer->CheckNodeAddress(sender, sender_port))
+                node = messages_mixer;
+            else if (entity_script_server->CheckNodeAddress(sender, sender_port))
+                node = entity_script_server;
+            else if (entity_server->CheckNodeAddress(sender, sender_port))
+                node = entity_server;
+
+            if (node){
+                node->SetSequenceNumber(domain_response_packet->GetSequenceNumber());
+
+                //qDebug() << "Node::RelayToClient() - Ping reply from: " << sender << sender_port;
+                if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
+                    audio_mixer->StartNegotiateAudioFormat();
+                }
             }
         }
         else {
@@ -789,7 +808,7 @@ void HifiConnection::SendIcePing(quint8 ping_type)
 {
     int packet_size = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
 
-    auto ice_ping_packet = Packet::Create(0, PacketType::ICEPing, packet_size);
+    auto ice_ping_packet = Packet::Create(sequence_number, PacketType::ICEPing, packet_size);
     ice_ping_packet->write(ice_client_id.toRfc4122());
     ice_ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
 
@@ -797,7 +816,7 @@ void HifiConnection::SendIcePing(quint8 ping_type)
 
 }
 
-void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port)
+void HifiConnection::SendIcePingReply(Packet * ice_ping)
 {
     quint8 ping_type;
 
@@ -813,7 +832,7 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, qu
 
     //qDebug() << packet_size << ice_ping_reply->GetDataSize();
 
-    hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), sender, sender_port);
+    hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
 }
 
 void HifiConnection::ClientMessageReceived(const QString &message)

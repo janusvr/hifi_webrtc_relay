@@ -66,6 +66,8 @@ public:
 
     NodeType_t GetNodeType() {return node_type;}
 
+    void SetSequenceNumber(uint32_t s) {sequence_number = s;}
+
     void SetNodeID(QUuid n);
     void SetNodeType(NodeType_t n);
     void SetPublicAddress(QHostAddress a, quint16 p);
@@ -122,6 +124,8 @@ private:
     QTimer * ping_timer;
     QTimer * restart_ping_timer;
     QTimer * hifi_response_timer;
+
+    uint32_t sequence_number;
 
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;

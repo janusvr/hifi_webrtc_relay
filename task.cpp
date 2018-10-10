@@ -10,12 +10,12 @@ Task::Task(QObject * parent) :
     qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << Utils::GetStunServerHostname();
     QHostInfo result_stun = QHostInfo::fromName(Utils::GetStunServerHostname());
     HandleLookupResult(result_stun, "stun");
-    qDebug() << "Task::Task() - STUN server IP address: " << Utils::GetStunServerHostname();
+    //qDebug() << "Task::Task() - STUN server IP address: " << Utils::GetStunServerHostname();
 
     qDebug() << "Task::Task() - Synchronously looking up IP address for hostname" << Utils::GetIceServerHostname();
     QHostInfo result_ice = QHostInfo::fromName(Utils::GetIceServerHostname());
     HandleLookupResult(result_ice, "ice");
-    qDebug() << "Task::Task() - ICE server IP address: " << Utils::GetIceServerHostname();
+    //qDebug() << "Task::Task() - ICE server IP address: " << Utils::GetIceServerHostname();
 
     signaling_server = new QWebSocketServer(QStringLiteral("Signaling Server"), QWebSocketServer::NonSecureMode, this);
 

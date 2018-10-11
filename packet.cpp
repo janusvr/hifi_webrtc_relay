@@ -156,7 +156,6 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
     AdjustPayloadStartAndCapacity(Packet::LocalHeaderSize(type), payload_size > 0);
 
     //int h = (Packet::LocalHeaderSize(type) + Packet::HeaderSize(is_part_of_message));
-    //qDebug() << h << (quint8)type << (int)version << local_id;
 }
 
 int Packet::HeaderSize(bool is_part_of_message) {

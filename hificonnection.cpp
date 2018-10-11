@@ -184,6 +184,29 @@ void HifiConnection::HifiConnect()
 
 void HifiConnection::StartStun()
 {
+    // Register Domain Server DC callbacks here
+    std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
+        QString m = QString::fromStdString(message);
+        qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
+        this->SendDomainServerMessage(m);
+    };
+    domain_server_dc->SetOnStringMsgCallback(onStringMessageCallback);
+
+    std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+        QByteArray m = QByteArray((char *) message->Data(), message->Length());
+        qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
+        this->SendDomainServerMessage(m);
+    };
+    domain_server_dc->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+
+    std::function<void()> onClosed = [this]() {
+        qDebug() << "HifiConnection::onClosed() - Domain Server data channel closed";
+        this->SetDomainServerDC(nullptr);
+        Q_EMIT Disconnected();
+    };
+    domain_server_dc->SetOnClosedCallback(onClosed);
+    //this->SendDomainServerDCMessage(QString("test_message"));
+
     hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
 
     num_requests = 0;
@@ -228,29 +251,6 @@ void HifiConnection::StartDomainConnect()
     disconnect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
 
     connect(hifi_socket.data(), SIGNAL(disconnected()), this, SLOT(ServerDisconnected()));
-
-    // Register Domain Server DC callbacks here
-    std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
-        QString m = QString::fromStdString(message);
-        qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
-        this->SendDomainServerMessage(m);
-    };
-    domain_server_dc->SetOnStringMsgCallback(onStringMessageCallback);
-
-    std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
-        QByteArray m = QByteArray((char *) message->Data(), message->Length());
-        qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
-        this->SendDomainServerMessage(m);
-    };
-    domain_server_dc->SetOnBinaryMsgCallback(onBinaryMessageCallback);
-
-    std::function<void()> onClosed = [this]() {
-        qDebug() << "HifiConnection::onClosed() - Domain Server data channel closed";
-        this->SetDomainServerDC(nullptr);
-        Q_EMIT Disconnected();
-    };
-    domain_server_dc->SetOnClosedCallback(onClosed);
-    //this->SendDomainServerDCMessage(QString("test_message"));
 
     started_domain_connect = true;
     num_requests = 0;
@@ -352,6 +352,8 @@ void HifiConnection::ParseStunResponse()
                 attribute_start_index += NUM_BYTES_MESSAGE_TYPE_AND_LENGTH + attribute_length;
             }
         }
+
+        SendDomainServerDCMessage(datagram);
     }
 }
 
@@ -384,6 +386,8 @@ void HifiConnection::ParseIceResponse()
         has_completed_current_request = true;
         StartDomainConnect();
         StartDomainIcePing();
+
+        SendDomainServerDCMessage(datagram);
     }
 }
 
@@ -405,10 +409,12 @@ void HifiConnection::ParseDomainResponse()
             //qDebug() << "HifiConnection::ParseDomainResponse() - Send ping reply";
             sequence_number = domain_response_packet->GetSequenceNumber();
             SendIcePingReply(domain_response_packet.get());
+            SendDomainServerDCMessage(datagram);
         }
         else if (domain_response_packet->GetType() == PacketType::ICEPingReply) {
             sequence_number = domain_response_packet->GetSequenceNumber();
             //qDebug() << "HifiConnection::ParseDomainResponse() - Process ping reply";
+            SendDomainServerDCMessage(datagram);
         }
         else if (domain_response_packet->GetType() == PacketType::DomainList) {
             qDebug() << "HifiConnection::ParseDomainResponse() - Process domain list";
@@ -446,6 +452,8 @@ void HifiConnection::ParseDomainResponse()
             bool is_authenticated;
             packet_stream >> is_authenticated; //TODO: handle authentication of packets
 
+            //qDebug() << permissions << is_authenticated;
+
             //qDebug() << domain_uuid << domain_local_id << session_id << local_id << new_permissions << is_authenticated;
 
             // pull each node in the packet
@@ -470,6 +478,8 @@ void HifiConnection::ParseDomainResponse()
             QString reason = QString::fromUtf8(utfReason.constData(), reasonSize);*/
 
             qDebug() << "HifiConnection::ParseDomainResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
+
+            SendDomainServerDCMessage(datagram);
         }
         else if (domain_response_packet->GetType() == PacketType::Ping) {
             Node * node = nullptr;
@@ -488,6 +498,7 @@ void HifiConnection::ParseDomainResponse()
 
             if (node){
                 //qDebug() << "Node::RelayToClient() - Send ping reply";
+                node->SendMessageToClient(datagram);
                 node->SetSequenceNumber(domain_response_packet->GetSequenceNumber());
                 node->PingReply(domain_response_packet.get());
             }
@@ -516,6 +527,7 @@ void HifiConnection::ParseDomainResponse()
                 node = entity_server;
 
             if (node){
+                node->SendMessageToClient(datagram);
                 node->SetSequenceNumber(domain_response_packet->GetSequenceNumber());
 
                 //qDebug() << "Node::RelayToClient() - Ping reply from: " << sender << sender_port;
@@ -830,7 +842,6 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping)
     ice_ping_reply->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
 
     //qDebug() << packet_size << ice_ping_reply->GetDataSize();
-
     hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
 }
 

@@ -2,6 +2,29 @@
 
 HifiConnection::HifiConnection(QWebSocket * s)
 {
+    domain_name = "";
+    domain_place_name = "";
+    domain_id = QUuid();
+    finished_domain_name_lookup = false;
+    finished_domain_id_request = false;
+    stun_server_hostname = "stun.highfidelity.io";
+    stun_server_address = QHostAddress();
+    stun_server_port = 3478;
+    ice_server_hostname = "ice.highfidelity.com"; //"dev-ice.highfidelity.com";
+
+    qDebug() << "HifiConnection::HifiConnection() - Synchronously looking up IP address for hostname" << stun_server_hostname;
+    QHostInfo result_stun = QHostInfo::fromName(stun_server_hostname);
+    HandleLookupResult(result_stun, "stun");
+    //qDebug() << "HifiConnection::HifiConnection() - STUN server IP address: " << stun_server_hostname;
+
+    qDebug() << "HifiConnection::HifiConnection() - Synchronously looking up IP address for hostname" << ice_server_hostname;
+    QHostInfo result_ice = QHostInfo::fromName(ice_server_hostname);
+    HandleLookupResult(result_ice, "ice");
+    //qDebug() << "HifiConnection::HifiConnection() - ICE server IP address: " << ice_server_hostname;
+
+    ice_server_address = Utils::GetDefaultIceServerAddress();
+    ice_server_port = Utils::GetDefaultIceServerPort();
+
     has_tcp_checked_local_socket = false;
     UpdateLocalSocket();
 
@@ -56,6 +79,27 @@ HifiConnection::HifiConnection(QWebSocket * s)
 HifiConnection::~HifiConnection()
 {
 
+}
+
+void HifiConnection::HandleLookupResult(const QHostInfo& hostInfo, QString addr_type)
+{
+    if (hostInfo.error() != QHostInfo::NoError) {
+        qDebug() << "Task::handleLookupResult() - Lookup failed for" << hostInfo.lookupId() << ":" << hostInfo.errorString();
+    } else {
+        for (int i = 0; i < hostInfo.addresses().size(); i++) {
+            // just take the first IPv4 address
+            QHostAddress address = hostInfo.addresses()[i];
+            if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+
+                if (addr_type == "stun") stun_server_address = address;
+                else if (addr_type == "ice") ice_server_address = address;
+
+                qDebug() << "Task::handleLookupResult() - QHostInfo lookup result for"
+                    << hostInfo.hostName() << "with lookup ID" << hostInfo.lookupId() << "is" << address.toString();
+                break;
+            }
+        }
+    }
 }
 
 void HifiConnection::UpdateLocalSocket()
@@ -174,6 +218,40 @@ void HifiConnection::Stop()
     {
         delete hifi_restart_ping_timer;
         hifi_restart_ping_timer = NULL;
+    }
+}
+
+void HifiConnection::DomainRequestFinished()
+{
+    if (domain_reply) {
+        if (domain_reply->error() == QNetworkReply::NoError && domain_reply->isOpen()) {
+            domain_reply_contents += domain_reply->readAll();
+
+            //qDebug() << domain_reply_contents;
+
+            QJsonDocument doc;
+            doc = QJsonDocument::fromJson(domain_reply_contents);
+            QJsonObject obj = doc.object();
+            QJsonObject data = obj["data"].toObject();
+            QJsonObject place = data["place"].toObject();
+            QJsonObject domain = place["domain"].toObject();
+            domain_id = QUuid(domain["id"].toString());
+            domain_place_name = domain["default_place_name"].toString();
+
+            if (domain.contains("ice_server_address")) {
+                ice_server_address = QHostAddress(domain["ice_server_address"].toString());
+            }
+        }
+        domain_reply->close();
+    }
+
+    qDebug() << "HifiConnection::domainRequestFinished() - Domain name" << domain_name;
+    qDebug() << "HifiConnection::domainRequestFinished() - Domain place name" << domain_place_name;
+    qDebug() << "HifiConnection::domainRequestFinished() - Domain ID" << domain_id;
+
+    finished_domain_id_request = true;
+    if (DataChannelsReady() && finished_domain_id_request) {
+        Q_EMIT WebRTCConnectionReady();
     }
 }
 
@@ -374,8 +452,8 @@ void HifiConnection::ParseIceResponse()
         QUuid domain_uuid;
         ice_response_stream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
 
-        if (domain_uuid != Utils::GetDomainID()){
-            qDebug() << "HifiConnection::ParseIceResponse() - Error: Domain ID's do not match " << domain_uuid << Utils::GetDomainID();
+        if (domain_uuid != domain_id){
+            qDebug() << "HifiConnection::ParseIceResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
         }
 
         qDebug() << "HifiConnection::ParseIceResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
@@ -424,7 +502,7 @@ void HifiConnection::ParseDomainResponse()
             QUuid domain_uuid;
             packet_stream >> domain_uuid;
 
-            if (domain_connected && Utils::GetDomainID() != domain_uuid) {
+            if (domain_connected && domain_id != domain_uuid) {
                 // Recieved packet from different domain.
                 qDebug() << "HifiConnection::ParseDomainResponse() - Received packet from different domain";
                 continue;
@@ -559,20 +637,20 @@ void HifiConnection::ParseDomainResponse()
 
 void HifiConnection::SendStunRequest()
 {
-    if (!Utils::GetFinishedDomainIDRequest() || !has_tcp_checked_local_socket) {
+    if (!finished_domain_id_request || !has_tcp_checked_local_socket) {
         return;
     }
 
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
-        qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << Utils::GetStunServerHostname() << Utils::GetStunServerPort();
+        qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
         hifi_response_timer->stop();
         hifi_response_timer->deleteLater();
         return;
     }
 
     if (!has_completed_current_request) {
-        qDebug() << "HifiConnection::SendStunRequest() - Sending initial stun request to" << Utils::GetStunServerHostname() << Utils::GetStunServerPort();
+        qDebug() << "HifiConnection::SendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
         ++num_requests;
     }
     else {
@@ -584,18 +662,15 @@ void HifiConnection::SendStunRequest()
 
     char * stun_request_packet = (char *) malloc(NUM_BYTES_STUN_HEADER);
     MakeStunRequestPacket(stun_request_packet);
-    qDebug () << "HifiConnection::SendStunRequest() - STUN address:" << Utils::GetStunServerAddress() << "STUN port:" << Utils::GetStunServerPort();
-    hifi_socket->writeDatagram(stun_request_packet, NUM_BYTES_STUN_HEADER, Utils::GetStunServerAddress(), Utils::GetStunServerPort());
+    qDebug () << "HifiConnection::SendStunRequest() - STUN address:" << stun_server_address << "STUN port:" << stun_server_port;
+    hifi_socket->writeDatagram(stun_request_packet, NUM_BYTES_STUN_HEADER, stun_server_address, stun_server_port);
 }
 
 void HifiConnection::SendIceRequest()
 {
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
-        if (Utils::GetUseCustomIceServer())
-            qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << Utils::GetIceServerAddress() << Utils::GetIceServerPort();
-        else
-            qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << Utils::GetIceServerHostname() << Utils::GetIceServerPort();
+        qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
 
         hifi_response_timer->stop();
         hifi_response_timer->deleteLater();
@@ -603,10 +678,7 @@ void HifiConnection::SendIceRequest()
     }
 
     if (!has_completed_current_request) {
-        if (Utils::GetUseCustomIceServer())
-            qDebug() << "HifiConnection::SendIceRequest() - Sending intial ice request to" << Utils::GetIceServerAddress() << Utils::GetIceServerPort();
-        else
-            qDebug() << "HifiConnection::SendIceRequest() - Sending intial ice request to" << Utils::GetIceServerHostname() << Utils::GetIceServerPort();
+        qDebug() << "HifiConnection::SendIceRequest() - Sending intial ice request to" << ice_server_address << ice_server_port;
 
         ++num_requests;
     }
@@ -621,11 +693,11 @@ void HifiConnection::SendIceRequest()
     //PacketVersion version = versionForPacketType(packetType);
     std::unique_ptr<Packet> ice_request_packet = Packet::Create(sequence_number,packetType);
     QDataStream ice_data_stream(ice_request_packet.get());
-    ice_data_stream << ice_client_id << public_address << public_port << local_address << local_port << Utils::GetDomainID();
+    ice_data_stream << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
     //qDebug () << "HifiConnection::SendIceRequest() - ICE address:" << hifi_socket->peerAddress() << "ICE port:" << hifi_socket->peerPort();
-    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)versionForPacketType(packetType) << ice_client_id << public_address << public_port << local_address << local_port << Utils::GetDomainID();
+    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)versionForPacketType(packetType) << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
 
-    hifi_socket->writeDatagram(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), Utils::GetIceServerAddress(), Utils::GetIceServerPort());
+    hifi_socket->writeDatagram(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), ice_server_address, ice_server_port);
 }
 
 void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
@@ -723,14 +795,14 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
 
 void HifiConnection::SendDomainIcePing()
 {
-    if (!Utils::GetFinishedDomainIDRequest()) {
+    if (!finished_domain_id_request) {
         return;
     }
 
     if (num_ping_requests >= 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
     {
         if (num_ping_requests > 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
-        //qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << Utils::GetDomainPlaceName();
+        //qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << domain_place_name;
 
         hifi_ping_timer->stop();
         ++num_ping_requests;
@@ -750,13 +822,13 @@ void HifiConnection::SendDomainIcePing()
 
 void HifiConnection::SendDomainConnectRequest()
 {
-    if (!Utils::GetFinishedDomainIDRequest()) {
+    if (!finished_domain_id_request) {
         return;
     }
 
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
-            qDebug() << "HifiConnection::SendDomainConnectRequest() - Stopping domain requests to" << Utils::GetDomainPlaceName();
+            qDebug() << "HifiConnection::SendDomainConnectRequest() - Stopping domain requests to" << domain_place_name;
 
         hifi_response_timer->stop();
         hifi_response_timer->deleteLater();
@@ -784,9 +856,9 @@ void HifiConnection::SendDomainConnectRequest()
     domain_connect_data_stream.writeBytes(protocol_version_sig.constData(), protocol_version_sig.size());
 
     //qDebug() << ice_client_id << protocol_version_sig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
-    //         << public_address << public_port << local_address << local_port << node_types_of_interest << Utils::GetDomainPlaceName();
+    //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domain_connect_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint()
-                            << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << Utils::GetDomainPlaceName(); //TODO: user_name_signature
+                            << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
 }
@@ -852,7 +924,26 @@ void HifiConnection::ClientMessageReceived(const QString &message)
     doc = QJsonDocument::fromJson(message.toLatin1());
     QJsonObject obj = doc.object();
     QString type = obj["type"].toString();
-    if (type == "offer")
+
+    if (type == "domain") {
+        // Domain ID lookup
+        if (domain_name == "") {
+            domain_name = obj["domain_name"].toString();
+
+            if (domain_name.left(7) == "hifi://"){
+                domain_name = domain_name.remove("hifi://");
+            }
+
+            qDebug() << "HifiConnection::ClientMessageReceived - Looking up domain ID for domain: " << domain_name;
+
+            QNetworkAccessManager * nam = new QNetworkAccessManager(this);
+            QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
+            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+            domain_reply = nam->get(request);
+            connect(domain_reply, SIGNAL(finished()), this, SLOT(DomainRequestFinished()));
+        }
+    }
+    else if (type == "offer")
     {
         rtcdcpp::RTCConfiguration config;
         config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun3.l.google.com", 19302});
@@ -907,7 +998,7 @@ void HifiConnection::ClientMessageReceived(const QString &message)
                 this->SetAssetServerDC(channel);
             }
 
-            if (this->DataChannelsReady()) {
+            if (this->DataChannelsReady() && this->finished_domain_name_lookup) {
                 qDebug() << "HifiConnection::WebRTCConnectionReady() - Data channels registered";
                 Q_EMIT WebRTCConnectionReady();
             }

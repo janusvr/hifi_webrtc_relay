@@ -17,17 +17,8 @@ QUuid Utils::machine_fingerprint = QUuid();
 quint64 Utils::TIMESTAMP_REF = 0;
 QElapsedTimer Utils::timestamp_timer = QElapsedTimer();
 
-QString Utils::domain_name = "";
-QString Utils::domain_place_name = "";
-QUuid Utils::domain_id = QUuid();
-bool Utils::finished_domain_id_request = false;
-QString Utils::stun_server_hostname = "stun.highfidelity.io";
-QHostAddress Utils::stun_server_address = QHostAddress();
-quint16 Utils::stun_server_port = 3478;
-QString Utils::ice_server_hostname = "ice.highfidelity.com"; //"dev-ice.highfidelity.com";
-QHostAddress Utils::ice_server_address = QHostAddress();
-quint16 Utils::ice_server_port = 7337;
-bool Utils::use_custom_ice_server = false;
+QHostAddress Utils::default_ice_server_address = QHostAddress();
+quint16 Utils::default_ice_server_port = 7337;
 
 Utils::Utils()
 {
@@ -37,6 +28,26 @@ Utils::Utils()
 Utils::~Utils()
 {
 
+}
+
+QHostAddress Utils::GetDefaultIceServerAddress()
+{
+    return default_ice_server_address;
+}
+
+void Utils::SetDefaultIceServerAddress(QHostAddress a)
+{
+    default_ice_server_address = a;
+}
+
+quint16 Utils::GetDefaultIceServerPort()
+{
+    return default_ice_server_port;
+}
+
+void Utils::SetDefaultIceServerPort(quint16 p)
+{
+    default_ice_server_port = p;
 }
 
 void Utils::SetupTimestamp()

@@ -39,6 +39,8 @@ public:
     HifiConnection(QWebSocket * s);
     ~HifiConnection();
 
+    void HandleLookupResult(const QHostInfo& hostInfo, QString addr_type);
+
     void UpdateLocalSocket();
     QHostAddress GetGuessedLocalAddress();
 
@@ -78,6 +80,8 @@ public Q_SLOTS:
     void ConnectedForLocalSocketTest();
     void ErrorTestingLocalSocket();
 
+    void DomainRequestFinished();
+
     void HifiConnect();
 
     void StartIce();
@@ -104,6 +108,9 @@ private:
         QString uuid_string_no_braces = uuid.toString().mid(1, uuid.toString().length() - 2);
         return uuid_string_no_braces;
     }
+
+    QNetworkReply * domain_reply;
+    QByteArray domain_reply_contents;
 
     bool has_tcp_checked_local_socket;
 
@@ -157,6 +164,20 @@ private:
     std::shared_ptr<rtcdcpp::DataChannel> entity_server_dc;
     std::shared_ptr<rtcdcpp::DataChannel> entity_script_server_dc;
     std::shared_ptr<rtcdcpp::DataChannel> asset_server_dc;
+
+    bool finished_domain_name_lookup;
+    bool finished_domain_id_request;
+    QString domain_name;
+    QString domain_place_name;
+    QUuid domain_id;
+
+    QString stun_server_hostname;
+    QHostAddress stun_server_address;
+    quint16 stun_server_port;
+
+    QString ice_server_hostname;
+    QHostAddress ice_server_address;
+    quint16 ice_server_port;
 };
 
 #endif // HIFICONNECTION_H

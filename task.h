@@ -41,13 +41,10 @@ public:
     ~Task();
 
     void ProcessCommandLineArguments(int argc, char * argv[]);
-    void HandleLookupResult(const QHostInfo& hostInfo, QString addr_type);
 
 public Q_SLOTS:
 
     void run();
-
-    void DomainRequestFinished();
 
     void Connect();
     void Disconnect();
@@ -61,9 +58,6 @@ Q_SIGNALS:
     void Finished();
 
 private:
-
-    QNetworkReply * domain_reply;
-    QByteArray domain_reply_contents;
 
     quint16 signaling_server_port;
     QWebSocketServer * signaling_server;

@@ -78,6 +78,13 @@ signalServer.onmessage = function (event) {
 
     switch (msg.type) {
         case 'connected':
+            //Send Domain Name to relay for lookup
+            var msg ={
+                type: 'domain',
+                domain_name: 'hifi://janusvr'
+            };
+            signalServer.send(JSON.stringify(msg));
+
             pcConstraint = null;
             dataConstraint = null;
             console.log('Using SCTP based data channels');

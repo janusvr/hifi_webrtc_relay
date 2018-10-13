@@ -92,7 +92,6 @@ public Q_SLOTS:
     void SendStunRequest();
     void ParseStunResponse();
     void SendIceRequest();
-    void ParseIceResponse();
     void SendDomainIcePing();
     void SendDomainConnectRequest();
     void ParseDomainResponse();
@@ -116,7 +115,8 @@ private:
 
     QSharedPointer<QUdpSocket> hifi_socket;
     QTimer * hifi_ping_timer;
-    QTimer * hifi_restart_ping_timer;
+    QTimer * stun_response_timer;
+    QTimer * ice_response_timer;
     QTimer * hifi_response_timer;
 
     QHostAddress public_address;
@@ -129,7 +129,6 @@ private:
     bool has_completed_current_request;
     bool domain_connected;
     uint32_t num_requests;
-    uint32_t num_ping_requests;
 
     QHostAddress domain_public_address;
     quint16 domain_public_port;
@@ -165,7 +164,6 @@ private:
     std::shared_ptr<rtcdcpp::DataChannel> entity_script_server_dc;
     std::shared_ptr<rtcdcpp::DataChannel> asset_server_dc;
 
-    bool finished_domain_name_lookup;
     bool finished_domain_id_request;
     QString domain_name;
     QString domain_place_name;

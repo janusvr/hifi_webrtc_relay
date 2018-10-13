@@ -122,7 +122,6 @@ private:
     QSharedPointer<QUdpSocket> node_socket;
 
     QTimer * ping_timer;
-    QTimer * restart_ping_timer;
     QTimer * hifi_response_timer;
 
     uint32_t sequence_number;
@@ -130,7 +129,6 @@ private:
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;
     int num_requests;
-    int num_ping_requests;
 
     std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 };

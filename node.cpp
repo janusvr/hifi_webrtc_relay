@@ -9,11 +9,6 @@ Node::Node()
 
     sequence_number = 0;
 
-    restart_ping_timer = new QTimer { this };
-    restart_ping_timer->setInterval(1000); // 250ms, Qt::CoarseTimer acceptable
-    connect(restart_ping_timer, &QTimer::timeout, this, &Node::StartPing);
-    restart_ping_timer->setSingleShot(true);
-
     ping_timer = new QTimer { this };
     connect(ping_timer, &QTimer::timeout, this, &Node::SendPing);
     ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
@@ -25,11 +20,6 @@ Node::~Node()
     {
         delete ping_timer;
         ping_timer = NULL;
-    }
-    if (restart_ping_timer)
-    {
-        delete restart_ping_timer;
-        restart_ping_timer = NULL;
     }
 }
 
@@ -99,7 +89,6 @@ void Node::ActivatePublicSocket(QSharedPointer<QUdpSocket> s)
 void Node::StartPing()
 {
     // start the ping timer for this node
-    num_ping_requests = 0;
     ping_timer->start();
 }
 
@@ -124,21 +113,6 @@ void Node::StartNegotiateAudioFormat()
 
 void Node::SendPing()
 {
-    if (num_ping_requests == 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
-    {
-        if (num_ping_requests > 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
-        //qDebug() << "Node::SendPing() - Restarting ping requests to" << (char) GetNodeType();
-
-        ping_timer->stop();
-        ++num_ping_requests;
-        restart_ping_timer->start();
-        return;
-    }
-    else
-    {
-        ++num_ping_requests;
-    }
-
     //Ping(1);
     Ping(2);
 }

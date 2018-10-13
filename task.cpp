@@ -82,6 +82,6 @@ void Task::DisconnectHifiConnection()
         hifi_connections.removeAll(s);
         qDebug() << "Task::DisconnectHifiConnection()" << s;
         s->Stop();
-        //delete s;
+        delete s;
     }
 }

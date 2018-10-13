@@ -5,7 +5,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     domain_name = "";
     domain_place_name = "";
     domain_id = QUuid();
-    finished_domain_name_lookup = false;
     finished_domain_id_request = false;
     stun_server_hostname = "stun.highfidelity.io";
     stun_server_address = QHostAddress();
@@ -55,14 +54,21 @@ HifiConnection::HifiConnection(QWebSocket * s)
     entity_server_dc = nullptr;
     entity_script_server_dc = nullptr;
 
-    hifi_restart_ping_timer = new QTimer { this };
-    hifi_restart_ping_timer->setInterval(1000); // 250ms, Qt::CoarseTimer acceptable
-    connect(hifi_restart_ping_timer, &QTimer::timeout, this, &HifiConnection::StartDomainIcePing);
-    hifi_restart_ping_timer->setSingleShot(true);
-
     hifi_ping_timer = new QTimer { this };
     connect(hifi_ping_timer, &QTimer::timeout, this, &HifiConnection::SendDomainIcePing);
     hifi_ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+
+    stun_response_timer = new QTimer { this };
+    connect(stun_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
+    stun_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+
+    ice_response_timer = new QTimer { this };
+    connect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
+    ice_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
+
+    hifi_response_timer = new QTimer { this };
+    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendDomainConnectRequest);
+    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     qDebug() << "HifiConnection::Connect() - New client" << s << ice_client_id << s->peerAddress() << s->peerPort();
     client_socket = s;
@@ -214,10 +220,23 @@ void HifiConnection::Stop()
         delete hifi_ping_timer;
         hifi_ping_timer = NULL;
     }
-    if (hifi_restart_ping_timer)
+
+    if (ice_response_timer)
     {
-        delete hifi_restart_ping_timer;
-        hifi_restart_ping_timer = NULL;
+        delete ice_response_timer;
+        ice_response_timer = NULL;
+    }
+
+    if (stun_response_timer)
+    {
+        delete stun_response_timer;
+        stun_response_timer = NULL;
+    }
+
+    if (hifi_response_timer)
+    {
+        delete hifi_response_timer;
+        hifi_response_timer = NULL;
     }
 }
 
@@ -257,11 +276,6 @@ void HifiConnection::DomainRequestFinished()
 
 void HifiConnection::HifiConnect()
 {
-    StartStun();
-}
-
-void HifiConnection::StartStun()
-{
     // Register Domain Server DC callbacks here
     std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
         QString m = QString::fromStdString(message);
@@ -287,56 +301,41 @@ void HifiConnection::StartStun()
 
     hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
 
+    StartStun();
+}
+
+void HifiConnection::StartStun()
+{
     num_requests = 0;
     has_completed_current_request = false;
 
     connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
 
-    hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
-    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
-
-    hifi_response_timer->start();
+    stun_response_timer->start();
 }
 
 void HifiConnection::StartIce()
 {
     disconnect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseStunResponse()));
-    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
+    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseDomainResponse()));
 
     num_requests = 0;
     has_completed_current_request = false;
 
-    disconnect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
-    hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
-    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
-
-    hifi_response_timer->start();
+    ice_response_timer->start();
 }
 
 void HifiConnection::StartDomainIcePing()
 {
-    num_ping_requests = 0;
     hifi_ping_timer->start();
 }
 
 void HifiConnection::StartDomainConnect()
 {
-    disconnect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseIceResponse()));
-    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseDomainResponse()));
-
-    disconnect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
-
     connect(hifi_socket.data(), SIGNAL(disconnected()), this, SLOT(ServerDisconnected()));
 
-    started_domain_connect = true;
     num_requests = 0;
     has_completed_current_request = false;
-
-    hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendDomainConnectRequest);
-    hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     hifi_response_timer->start();
 }
@@ -413,9 +412,11 @@ void HifiConnection::ParseStunResponse()
                     hifi_socket->waitForDisconnected();*/
 
                     has_completed_current_request = true;
+                    stun_response_timer->stop();
 
                     StartIce();
 
+                    SendDomainServerDCMessage(datagram);
                     return;
                 }
             } else {
@@ -435,40 +436,6 @@ void HifiConnection::ParseStunResponse()
     }
 }
 
-void HifiConnection::ParseIceResponse()
-{
-    while (hifi_socket->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(hifi_socket->pendingDatagramSize());
-        QHostAddress sender;
-        quint16 sender_port;
-
-        hifi_socket->readDatagram(datagram.data(), datagram.size(), &sender, &sender_port);
-
-        //qDebug() << "HifiConnection::ParseIceResponse() - read packet from " << sender << ":" << sender_port << " of size " << datagram.size() << " bytes";
-
-        std::unique_ptr<Packet> ice_response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
-        QDataStream ice_response_stream(ice_response_packet.get()->readAll());
-        QUuid domain_uuid;
-        ice_response_stream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
-
-        if (domain_uuid != domain_id){
-            qDebug() << "HifiConnection::ParseIceResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
-        }
-
-        qDebug() << "HifiConnection::ParseIceResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
-
-        /*hifi_socket->disconnectFromHost();
-        hifi_socket->waitForDisconnected();*/
-
-        has_completed_current_request = true;
-        StartDomainConnect();
-        StartDomainIcePing();
-
-        SendDomainServerDCMessage(datagram);
-    }
-}
-
 void HifiConnection::ParseDomainResponse()
 {
     while (hifi_socket->hasPendingDatagrams()) {
@@ -483,7 +450,33 @@ void HifiConnection::ParseDomainResponse()
 
         std::unique_ptr<Packet> domain_response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
         //qDebug() << "HifiConnection::ParseDomainResponse() - Packet type" << (int) domain_response_packet->GetType();
-        if (domain_response_packet->GetType() == PacketType::ICEPing) {
+        if (domain_response_packet->GetType() == PacketType::ICEServerPeerInformation)
+        {
+            QDataStream ice_response_stream(domain_response_packet.get()->readAll());
+            QUuid domain_uuid;
+            ice_response_stream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
+
+            if (domain_uuid != domain_id){
+                qDebug() << "HifiConnection::ParseDomainResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
+            }
+
+            qDebug() << "HifiConnection::ParseDomainResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
+
+            /*hifi_socket->disconnectFromHost();
+            hifi_socket->waitForDisconnected();*/
+
+            has_completed_current_request = true;
+            if (!started_domain_connect)
+            {
+                ice_response_timer->stop();
+                started_domain_connect = true;
+                StartDomainConnect();
+                StartDomainIcePing();
+            }
+
+            SendDomainServerDCMessage(datagram);
+        }
+        else if (domain_response_packet->GetType() == PacketType::ICEPing) {
             //qDebug() << "HifiConnection::ParseDomainResponse() - Send ping reply";
             sequence_number = domain_response_packet->GetSequenceNumber();
             SendIcePingReply(domain_response_packet.get());
@@ -518,6 +511,7 @@ void HifiConnection::ParseDomainResponse()
 
             // if this was the first domain-server list from this domain, we've now connected
             if (!domain_connected) {
+                hifi_response_timer->stop();
                 domain_connected = true;
             }
 
@@ -644,8 +638,9 @@ void HifiConnection::SendStunRequest()
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
     {
         qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        stun_response_timer->stop();
+        //disconnect(stun_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
+        //stun_response_timer->deleteLater();
         return;
     }
 
@@ -655,8 +650,6 @@ void HifiConnection::SendStunRequest()
     }
     else {
         //qDebug() << "HifiConnection::SendStunRequest() - Completed stun request";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
         return;
     }
 
@@ -672,8 +665,9 @@ void HifiConnection::SendIceRequest()
     {
         qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
 
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        ice_response_timer->stop();
+        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
+        //ice_response_timer->deleteLater();
         return;
     }
 
@@ -684,8 +678,9 @@ void HifiConnection::SendIceRequest()
     }
     else {
         //qDebug() << "HifiConnection::SendIceRequest() - Completed ice request";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        //ice_response_timer->stop();
+        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
+        //ice_response_timer->deleteLater();
         return;
     }
 
@@ -799,22 +794,6 @@ void HifiConnection::SendDomainIcePing()
         return;
     }
 
-    if (num_ping_requests >= 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC)
-    {
-        if (num_ping_requests > 2000 / HIFI_PING_UPDATE_INTERVAL_MSEC) return;
-        //qDebug() << "HifiConnection::SendDomainIcePing() - Restarting domain ice ping requests to" << domain_place_name;
-
-        hifi_ping_timer->stop();
-        ++num_ping_requests;
-        hifi_restart_ping_timer->start();
-
-        return;
-    }
-    else
-    {
-        num_ping_requests++;
-    }
-
     // send the ping packet to the local and public sockets for this node
     //SendIcePing((quint8) 1);
     SendIcePing((quint8) 2);
@@ -831,7 +810,7 @@ void HifiConnection::SendDomainConnectRequest()
             qDebug() << "HifiConnection::SendDomainConnectRequest() - Stopping domain requests to" << domain_place_name;
 
         hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        //hifi_response_timer->deleteLater();
         return;
     }
 
@@ -841,8 +820,8 @@ void HifiConnection::SendDomainConnectRequest()
     }
     else {
         //qDebug() << "HifiConnection::SendDomainConnectRequest() - Completed domain connect request";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
+        //hifi_response_timer->stop();
+        //hifi_response_timer->deleteLater();
         return;
     }
 
@@ -998,7 +977,7 @@ void HifiConnection::ClientMessageReceived(const QString &message)
                 this->SetAssetServerDC(channel);
             }
 
-            if (this->DataChannelsReady() && this->finished_domain_name_lookup) {
+            if (this->DataChannelsReady() && this->finished_domain_id_request) {
                 qDebug() << "HifiConnection::WebRTCConnectionReady() - Data channels registered";
                 Q_EMIT WebRTCConnectionReady();
             }

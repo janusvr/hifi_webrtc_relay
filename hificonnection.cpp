@@ -28,6 +28,10 @@ HifiConnection::HifiConnection(QWebSocket * s)
     UpdateLocalSocket();
 
     connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(HifiConnect()));
+    connect(this, SIGNAL(StartHifiConnection()), this, SLOT(StartStun()));
+    connect(this, SIGNAL(StunFinished()), this, SLOT(StartIce()));
+    connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainIcePing()));
+    connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainConnect()));
 
     ice_client_id = QUuid::createUuid();
 
@@ -301,7 +305,7 @@ void HifiConnection::HifiConnect()
 
     hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
 
-    StartStun();
+    Q_EMIT StartHifiConnection();
 }
 
 void HifiConnection::StartStun()
@@ -365,6 +369,7 @@ void HifiConnection::ParseStunResponse()
                    &RFC_5389_MAGIC_COOKIE_NETWORK_ORDER,
                    sizeof(RFC_5389_MAGIC_COOKIE_NETWORK_ORDER)) != 0) {
             qDebug() << "HifiConnection::ParseStunResponse() - STUN response cannot be parsed, magic cookie is invalid";
+            Q_EMIT Disconnected();
             return;
         }
 
@@ -414,7 +419,7 @@ void HifiConnection::ParseStunResponse()
                     has_completed_current_request = true;
                     stun_response_timer->stop();
 
-                    StartIce();
+                    Q_EMIT StunFinished();
 
                     SendDomainServerDCMessage(datagram);
                     return;
@@ -458,6 +463,7 @@ void HifiConnection::ParseDomainResponse()
 
             if (domain_uuid != domain_id){
                 qDebug() << "HifiConnection::ParseDomainResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
+                Q_EMIT Disconnected();
             }
 
             qDebug() << "HifiConnection::ParseDomainResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
@@ -470,8 +476,8 @@ void HifiConnection::ParseDomainResponse()
             {
                 ice_response_timer->stop();
                 started_domain_connect = true;
-                StartDomainConnect();
-                StartDomainIcePing();
+
+                Q_EMIT IceFinished();
             }
 
             SendDomainServerDCMessage(datagram);
@@ -629,72 +635,6 @@ void HifiConnection::ParseDomainResponse()
     return;
 }
 
-void HifiConnection::SendStunRequest()
-{
-    if (!finished_domain_id_request || !has_tcp_checked_local_socket) {
-        return;
-    }
-
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
-        qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
-        stun_response_timer->stop();
-        //disconnect(stun_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
-        //stun_response_timer->deleteLater();
-        return;
-    }
-
-    if (!has_completed_current_request) {
-        qDebug() << "HifiConnection::SendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
-        ++num_requests;
-    }
-    else {
-        //qDebug() << "HifiConnection::SendStunRequest() - Completed stun request";
-        return;
-    }
-
-    char * stun_request_packet = (char *) malloc(NUM_BYTES_STUN_HEADER);
-    MakeStunRequestPacket(stun_request_packet);
-    qDebug () << "HifiConnection::SendStunRequest() - STUN address:" << stun_server_address << "STUN port:" << stun_server_port;
-    hifi_socket->writeDatagram(stun_request_packet, NUM_BYTES_STUN_HEADER, stun_server_address, stun_server_port);
-}
-
-void HifiConnection::SendIceRequest()
-{
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
-        qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
-
-        ice_response_timer->stop();
-        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
-        //ice_response_timer->deleteLater();
-        return;
-    }
-
-    if (!has_completed_current_request) {
-        qDebug() << "HifiConnection::SendIceRequest() - Sending intial ice request to" << ice_server_address << ice_server_port;
-
-        ++num_requests;
-    }
-    else {
-        //qDebug() << "HifiConnection::SendIceRequest() - Completed ice request";
-        //ice_response_timer->stop();
-        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
-        //ice_response_timer->deleteLater();
-        return;
-    }
-
-    PacketType packetType = PacketType::ICEServerQuery;
-    //PacketVersion version = versionForPacketType(packetType);
-    std::unique_ptr<Packet> ice_request_packet = Packet::Create(sequence_number,packetType);
-    QDataStream ice_data_stream(ice_request_packet.get());
-    ice_data_stream << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
-    //qDebug () << "HifiConnection::SendIceRequest() - ICE address:" << hifi_socket->peerAddress() << "ICE port:" << hifi_socket->peerPort();
-    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)versionForPacketType(packetType) << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
-
-    hifi_socket->writeDatagram(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), ice_server_address, ice_server_port);
-}
-
 void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
 {
     // setup variables to read into from QDataStream
@@ -788,6 +728,95 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
     //}
 }
 
+void HifiConnection::SendStunRequest()
+{
+    if (!finished_domain_id_request || !has_tcp_checked_local_socket) {
+        return;
+    }
+
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
+    {
+        qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
+        stun_response_timer->stop();
+        Q_EMIT Disconnected();
+        //disconnect(stun_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
+        //stun_response_timer->deleteLater();
+        return;
+    }
+
+    if (!has_completed_current_request) {
+        qDebug() << "HifiConnection::SendStunRequest() - Sending initial stun request to" << stun_server_hostname << stun_server_port;
+        ++num_requests;
+    }
+    else {
+        //qDebug() << "HifiConnection::SendStunRequest() - Completed stun request";
+        return;
+    }
+
+    char * stun_request_packet = (char *) malloc(NUM_BYTES_STUN_HEADER);
+
+    int packet_index = 0;
+    const uint32_t RFC_5389_MAGIC_COOKIE_NETWORK_ORDER = htonl(RFC_5389_MAGIC_COOKIE);
+
+    // leading zeros + message type
+    const uint16_t REQUEST_MESSAGE_TYPE = htons(0x0001);
+    memcpy(stun_request_packet + packet_index, &REQUEST_MESSAGE_TYPE, sizeof(REQUEST_MESSAGE_TYPE));
+    packet_index += sizeof(REQUEST_MESSAGE_TYPE);
+
+    // message length (no additional attributes are included)
+    uint16_t message_length = 0;
+    memcpy(stun_request_packet + packet_index, &message_length, sizeof(message_length));
+    packet_index += sizeof(message_length);
+
+    memcpy(stun_request_packet + packet_index, &RFC_5389_MAGIC_COOKIE_NETWORK_ORDER, sizeof(RFC_5389_MAGIC_COOKIE_NETWORK_ORDER));
+    packet_index += sizeof(RFC_5389_MAGIC_COOKIE_NETWORK_ORDER);
+
+    // transaction ID (random 12-byte unsigned integer)
+    const uint NUM_TRANSACTION_ID_BYTES = 12;
+    QUuid randomUUID = QUuid::createUuid();
+    memcpy(stun_request_packet + packet_index, randomUUID.toRfc4122().data(), NUM_TRANSACTION_ID_BYTES);
+
+    qDebug () << "HifiConnection::SendStunRequest() - STUN address:" << stun_server_address << "STUN port:" << stun_server_port;
+    hifi_socket->writeDatagram(stun_request_packet, NUM_BYTES_STUN_HEADER, stun_server_address, stun_server_port);
+}
+
+void HifiConnection::SendIceRequest()
+{
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
+    {
+        qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
+
+        ice_response_timer->stop();
+        Q_EMIT Disconnected();
+        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
+        //ice_response_timer->deleteLater();
+        return;
+    }
+
+    if (!has_completed_current_request) {
+        qDebug() << "HifiConnection::SendIceRequest() - Sending intial ice request to" << ice_server_address << ice_server_port;
+
+        ++num_requests;
+    }
+    else {
+        //qDebug() << "HifiConnection::SendIceRequest() - Completed ice request";
+        //ice_response_timer->stop();
+        //disconnect(ice_response_timer, &QTimer::timeout, this, &HifiConnection::SendIceRequest);
+        //ice_response_timer->deleteLater();
+        return;
+    }
+
+    PacketType packetType = PacketType::ICEServerQuery;
+    //PacketVersion version = versionForPacketType(packetType);
+    std::unique_ptr<Packet> ice_request_packet = Packet::Create(sequence_number,packetType);
+    QDataStream ice_data_stream(ice_request_packet.get());
+    ice_data_stream << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
+    //qDebug () << "HifiConnection::SendIceRequest() - ICE address:" << hifi_socket->peerAddress() << "ICE port:" << hifi_socket->peerPort();
+    //qDebug() << "ICE packet values" << sequence_number << (uint8_t)packetType << (int)versionForPacketType(packetType) << ice_client_id << public_address << public_port << local_address << local_port << domain_id;
+
+    hifi_socket->writeDatagram(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), ice_server_address, ice_server_port);
+}
+
 void HifiConnection::SendDomainIcePing()
 {
     if (!finished_domain_id_request) {
@@ -810,6 +839,7 @@ void HifiConnection::SendDomainConnectRequest()
             qDebug() << "HifiConnection::SendDomainConnectRequest() - Stopping domain requests to" << domain_place_name;
 
         hifi_response_timer->stop();
+        Q_EMIT Disconnected();
         //hifi_response_timer->deleteLater();
         return;
     }
@@ -840,31 +870,6 @@ void HifiConnection::SendDomainConnectRequest()
                             << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
-}
-
-void HifiConnection::MakeStunRequestPacket(char * stun_request_packet)
-{
-    int packet_index = 0;
-
-    const uint32_t RFC_5389_MAGIC_COOKIE_NETWORK_ORDER = htonl(RFC_5389_MAGIC_COOKIE);
-
-    // leading zeros + message type
-    const uint16_t REQUEST_MESSAGE_TYPE = htons(0x0001);
-    memcpy(stun_request_packet + packet_index, &REQUEST_MESSAGE_TYPE, sizeof(REQUEST_MESSAGE_TYPE));
-    packet_index += sizeof(REQUEST_MESSAGE_TYPE);
-
-    // message length (no additional attributes are included)
-    uint16_t message_length = 0;
-    memcpy(stun_request_packet + packet_index, &message_length, sizeof(message_length));
-    packet_index += sizeof(message_length);
-
-    memcpy(stun_request_packet + packet_index, &RFC_5389_MAGIC_COOKIE_NETWORK_ORDER, sizeof(RFC_5389_MAGIC_COOKIE_NETWORK_ORDER));
-    packet_index += sizeof(RFC_5389_MAGIC_COOKIE_NETWORK_ORDER);
-
-    // transaction ID (random 12-byte unsigned integer)
-    const uint NUM_TRANSACTION_ID_BYTES = 12;
-    QUuid randomUUID = QUuid::createUuid();
-    memcpy(stun_request_packet + packet_index, randomUUID.toRfc4122().data(), NUM_TRANSACTION_ID_BYTES);
 }
 
 void HifiConnection::SendIcePing(quint8 ping_type)

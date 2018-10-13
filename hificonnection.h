@@ -46,7 +46,6 @@ public:
 
     void Stop();
 
-    void MakeStunRequestPacket(char * stun_request_packet);
     void SendIcePing(quint8 ping_type);
     void SendIcePingReply(Packet * ice_ping);
 
@@ -74,6 +73,10 @@ Q_SIGNALS:
 
     void Disconnected();
     void WebRTCConnectionReady();
+
+    void StartHifiConnection();
+    void StunFinished();
+    void IceFinished();
 
 public Q_SLOTS:
 

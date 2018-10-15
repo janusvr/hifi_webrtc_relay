@@ -66,7 +66,7 @@ public:
 
     NodeType_t GetNodeType() {return node_type;}
 
-    void SetSequenceNumber(uint32_t s) {sequence_number = s;}
+    void SetSequenceNumber(uint32_t s) { if (s > sequence_number) sequence_number = s;}
 
     void SetNodeID(QUuid n);
     void SetNodeType(NodeType_t n);
@@ -82,9 +82,8 @@ public:
 
     void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
 
-    void StartPing();
     void Ping(quint8 ping_type);
-    void PingReply(Packet * packet);
+    void PingReply(Packet * packet, QHostAddress sender, quint16 sender_port);
     void SetNegotiatedAudioFormat(bool b);
     void StartNegotiateAudioFormat();
 
@@ -121,7 +120,6 @@ private:
 
     QSharedPointer<QUdpSocket> node_socket;
 
-    QTimer * ping_timer;
     QTimer * hifi_response_timer;
 
     uint32_t sequence_number;

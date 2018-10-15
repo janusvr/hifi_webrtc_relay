@@ -47,7 +47,7 @@ public:
     void Stop();
 
     void SendIcePing(quint8 ping_type);
-    void SendIcePingReply(Packet * ice_ping);
+    void SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port);
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
@@ -77,6 +77,7 @@ Q_SIGNALS:
     void StartHifiConnection();
     void StunFinished();
     void IceFinished();
+    void DomainIcePingFinished();
 
 public Q_SLOTS:
 
@@ -179,6 +180,9 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
+
+    bool pinged;
+    bool pingreplied;
 };
 
 #endif // HIFICONNECTION_H

@@ -8,6 +8,7 @@ var messages_sendChannel;
 var asset_sendChannel;
 var remoteCandidates = [];
 var have_answer = false;
+var id;
 
 signalServer.onopen = function (event) {
 
@@ -79,11 +80,14 @@ signalServer.onmessage = function (event) {
     switch (msg.type) {
         case 'connected':
             //Send Domain Name to relay for lookup
-            var msg ={
+            var m ={
                 type: 'domain',
                 domain_name: 'hifi://janusvr'
             };
-            signalServer.send(JSON.stringify(msg));
+            signalServer.send(JSON.stringify(m));
+
+            id = msg.id;
+            console.log('node id ' + id);
 
             pcConstraint = null;
             dataConstraint = null;

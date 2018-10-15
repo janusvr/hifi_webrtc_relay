@@ -85,6 +85,7 @@ HifiConnection::HifiConnection(QWebSocket * s)
 
     QJsonObject connected_object;
     connected_object.insert("type", QJsonValue::fromVariant("connected"));
+    connected_object.insert("id", QJsonValue::fromVariant(ice_client_id.toString()));
     QJsonDocument connectedDoc(connected_object);
     client_socket->sendTextMessage(QString::fromStdString(connectedDoc.toJson().toStdString()));
 }

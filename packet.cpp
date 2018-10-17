@@ -123,6 +123,14 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
 
     uint32_t* seq_num_bit_field = reinterpret_cast<uint32_t*>(packet.get());
 
+    bool is_control = (bool) (*seq_num_bit_field & CONTROL_BIT_MASK); // Only keep reliability bit
+    if (is_control)
+    {
+        AdjustPayloadStartAndCapacity(Packet::LocalControlHeaderSize(), payload_size > 0);
+        ReadControlType();
+        return;
+    }
+
     is_reliable = (bool) (*seq_num_bit_field & RELIABILITY_BIT_MASK); // Only keep reliability bit
     is_part_of_message = (bool) (*seq_num_bit_field & MESSAGE_BIT_MASK); // Only keep message bit
     obfuscation_level = (int)((*seq_num_bit_field & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);

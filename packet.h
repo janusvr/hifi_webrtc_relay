@@ -322,6 +322,15 @@ enum class AvatarQueryVersion : PacketVersion {
     ConicalFrustums = 22
 };
 
+using ControlBitAndType = uint32_t;
+
+enum ControlType : uint16_t {
+    ACK,
+    Handshake,
+    HandshakeACK,
+    HandshakeRequest
+};
+
 const int UDP_IPV4_HEADER_SIZE = 28;
 const int MAX_PACKET_SIZE_WITH_UDP_HEADER = 1492;
 const int MAX_PACKET_SIZE = MAX_PACKET_SIZE_WITH_UDP_HEADER - UDP_IPV4_HEADER_SIZE;
@@ -371,16 +380,67 @@ public:
     };
 
     Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
+    Packet(uint32_t sequence, ControlType t, qint64 size = MAX_PACKET_SIZE){
+        control_type = t;
+
+        packet_size = (size == -1) ? MAX_PACKET_SIZE: size;
+        payload_size = 0;
+        payload_capacity = packet_size;
+        packet.reset(new char[packet_size]());
+
+        payload_start = packet.get();
+        sequence_number = sequence;
+        is_part_of_message = false;
+
+        AdjustPayloadStartAndCapacity(Packet::LocalControlHeaderSize());
+        open(QIODevice::ReadWrite);
+
+        WriteControlType();
+        write(reinterpret_cast<const char*>(&sequence_number), sizeof(uint32_t));
+    }
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
 
     static int HeaderSize(bool is_part_of_message);
     static int LocalHeaderSize(PacketType type);
+    static int LocalControlHeaderSize() {
+        return sizeof(ControlBitAndType);
+    }
     int TotalHeaderSize();
 
     static std::unique_ptr<Packet> Create(uint32_t sequence, PacketType t, qint64 size = -1);
     static std::unique_ptr<Packet> FromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
 
+    static std::unique_ptr<Packet> CreateControl(uint32_t sequence, ControlType t, qint64 size = -1)
+    {
+        return std::unique_ptr<Packet>(new Packet(sequence, t, HeaderSize(false) + Packet::LocalControlHeaderSize() + size));
+    }
+    static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
+    {
+        // allocate memory
+        auto packet = std::unique_ptr<Packet>(new Packet(data, Packet::LocalControlHeaderSize() + size, addr, port));
+
+        packet->open(QIODevice::ReadOnly);
+
+        return packet;
+    }
+
     void Obfuscate(ObfuscationLevel level);
+
+    void WriteControlType() {
+        ControlBitAndType* bit_and_type = reinterpret_cast<ControlBitAndType*>(packet.get());
+
+        // We override the control bit here by writing the type but it's okay, it'll always be 1
+        *bit_and_type = CONTROL_BIT_MASK | (ControlBitAndType(control_type) << (8 * sizeof(ControlType)));
+    }
+
+    void ReadControlType() {
+        ControlBitAndType bit_and_type = *reinterpret_cast<ControlBitAndType*>(packet.get());
+
+        uint16_t packet_type = (bit_and_type & ~CONTROL_BIT_MASK) >> (8 * sizeof(ControlType));
+
+        // read the type
+        control_type = (ControlType) packet_type;
+    }
 
     void WriteSourceID(quint16 s);
     void WriteVerificationHash(HMACAuth * h);
@@ -402,6 +462,7 @@ public:
     qint64 GetDataSize() const { return (payload_start - packet.get()) + payload_size; }
 
     PacketType GetType() {return type;}
+    ControlType GetControlType() {return control_type;}
     bool GetIsPartOfMessage() const {return is_part_of_message;}
     uint32_t GetSequenceNumber() {return sequence_number;}
 
@@ -409,6 +470,7 @@ public:
 
 private:
     PacketType type;
+    ControlType control_type;
     PacketVersion version;
 
     qint64 packet_size;

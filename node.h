@@ -95,6 +95,9 @@ public:
 
     bool CheckNodeAddress(QHostAddress a, quint16 p);
 
+    void HandleControlPacket(Packet * control_packet);
+    void SendHandshakeRequest();
+
 Q_SIGNALS:
     void Disconnected();
 
@@ -123,12 +126,20 @@ private:
     QTimer * hifi_response_timer;
 
     uint32_t sequence_number;
+    uint32_t last_sequence_number;
 
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;
     int num_requests;
 
     std::shared_ptr<rtcdcpp::DataChannel> data_channel;
+
+    std::unique_ptr<Packet> ack_packet;
+    std::unique_ptr<Packet>  handshake_ack;
+    uint32_t last_ack_received;
+    bool has_received_handshake;
+    bool has_received_handshake_ack;
+    bool did_request_handshake;
 };
 
 #endif // NODE_H

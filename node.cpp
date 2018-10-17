@@ -1,3 +1,5 @@
+#include <random>
+
 #include "node.h"
 
 Node::Node()
@@ -7,7 +9,22 @@ Node::Node()
     started_negotiating_audio_format = false;
     negotiated_audio_format = false;
 
-    sequence_number = 0;
+    static std::random_device rd;
+    static std::mt19937 generator(rd());
+    static std::uniform_int_distribution<> distribution(0, 0x07FFFFFF);
+    sequence_number = distribution(generator);
+
+    has_received_handshake_ack = false;
+    did_request_handshake = false;
+
+    static const int ACK_PACKET_PAYLOAD_BYTES = sizeof(uint32_t);
+    static const int HANDSHAKE_ACK_PAYLOAD_BYTES = sizeof(uint32_t);
+    ack_packet = Packet::CreateControl(sequence_number, ControlType::ACK, ACK_PACKET_PAYLOAD_BYTES);
+    //QByteArray b(ack_packet->GetData(), ack_packet->GetDataSize());
+    //qDebug() << "ack_packet" << b;
+    handshake_ack = Packet::CreateControl(sequence_number, ControlType::HandshakeACK, HANDSHAKE_ACK_PAYLOAD_BYTES);
+    //QByteArray a(handshake_ack->GetData(), handshake_ack->GetDataSize());
+    //qDebug() << "handshake_ack" << a;
 }
 
 Node::~Node()
@@ -105,6 +122,11 @@ void Node::SendPing()
 
 void Node::Ping(quint8 ping_type)
 {
+    if (!has_received_handshake_ack) {
+        SendHandshakeRequest();
+        return;
+    }
+
     quint64 timestamp = Utils::GetTimestamp(); // in usec
     int64_t connection_id = 0;
 
@@ -121,9 +143,15 @@ void Node::Ping(quint8 ping_type)
 
     //qDebug() << "Node::SendPing() - Pinging to node: " << (char) node_type << ping_type << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << ping_packet->GetDataSize();
     node_socket->writeDatagram(ping_packet->GetData(), ping_packet->GetDataSize(), (ping_type == 1)?local_address:public_address, (ping_type == 1)?local_port:public_port);
+    sequence_number++;
 }
 void Node::PingReply(Packet * packet, QHostAddress sender, quint16 sender_port)
 {
+    if (!has_received_handshake_ack) {
+        SendHandshakeRequest();
+        return;
+    }
+
     const char * message = packet->readAll().constData();
 
     quint8 type_from_original_ping;
@@ -144,6 +172,7 @@ void Node::PingReply(Packet * packet, QHostAddress sender, quint16 sender_port)
 
     //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
     node_socket->writeDatagram(reply_packet->GetData(), reply_packet->GetDataSize(), sender, sender_port);
+    sequence_number++;
 }
 
 void Node::SendNegotiateAudioFormat()
@@ -177,6 +206,7 @@ void Node::SendNegotiateAudioFormat()
     negotiate_format_packet->WriteVerificationHash(authenticate_hash.get());
 
     node_socket->writeDatagram(negotiate_format_packet->GetData(), negotiate_format_packet->GetDataSize(), public_address, public_port);
+    sequence_number++;
 }
 
 void Node::SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
@@ -215,4 +245,84 @@ bool Node::CheckNodeAddress(QHostAddress a, quint16 p)
 {
     //qDebug() << a.toIPv4Address()<< public_address.toIPv4Address() << p << public_port;
     return (a.toIPv4Address() == public_address.toIPv4Address() && p == public_port);
+}
+
+void Node::HandleControlPacket(Packet * control_packet)
+{
+    qDebug() << "NODE HANDLE PACKET";
+    switch (control_packet->GetControlType()) {
+        case ControlType::ACK: {
+        qDebug() << "RECEIVED CONTROL ACK";
+            if (has_received_handshake_ack) {
+                // read the ACKed sequence number
+                uint32_t ack;
+                control_packet->read(reinterpret_cast<char*>(&ack), sizeof(uint32_t));
+
+                if (ack <= last_ack_received) {
+                    // this is an out of order ACK, bail
+                    // or
+                    // processing an already received ACK, bail
+                    return;
+                }
+
+                last_ack_received = ack;
+            }
+            break;
+        }
+        case ControlType::Handshake: {
+        qDebug() << "RECEIVED CONTROL HANDSHAKE";
+            uint32_t initial_sequence_number;
+            control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+
+            if (!has_received_handshake || initial_sequence_number != sequence_number) {
+                // server sent us a handshake - we need to assume this means state should be reset
+                // as long as we haven't received a handshake yet or we have and we've received some data
+                sequence_number = initial_sequence_number;
+                last_sequence_number = initial_sequence_number - 1;
+            }
+
+            handshake_ack->reset();
+            handshake_ack->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(uint32_t));
+            node_socket->writeDatagram(handshake_ack->GetData(), handshake_ack->GetDataSize(), public_address, public_port);
+
+            // indicate that handshake has been received
+            has_received_handshake = true;
+
+            if (did_request_handshake) {
+                did_request_handshake = false;
+            }
+            break;
+        }
+        case ControlType::HandshakeACK: {
+        qDebug() << "RECEIVED CONTROL HANDSHAKE ACK";
+            // if we've decided to clean up the send queue then this handshake ACK should be ignored, it's useless
+            uint32_t initial_sequence_number;
+            control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+
+            qDebug() << "handshake ack" << initial_sequence_number << sequence_number;
+            if (initial_sequence_number == sequence_number) {
+                // indicate that handshake ACK was received
+                has_received_handshake_ack = true;
+            }
+            break;
+        }
+        case ControlType::HandshakeRequest: {
+        qDebug() << "RECEIVED HANDSHAKE REQUEST";
+            if (has_received_handshake_ack) {
+                // We're already in a state where we've received a handshake ack, so we are likely in a state
+                // where the other end expired our connection. Let's reset.
+                has_received_handshake_ack = false;
+            }
+            break;
+        }
+    }
+}
+
+void Node::SendHandshakeRequest()
+{
+    auto handshake_request_packet = Packet::CreateControl(sequence_number, ControlType::HandshakeRequest, 0);
+    node_socket->writeDatagram(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize(), public_address, public_port);
+    //QByteArray b(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize());
+    //qDebug() << "handshake" << b;
+    did_request_handshake = true;
 }

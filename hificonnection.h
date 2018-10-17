@@ -69,6 +69,8 @@ public:
     void SendDomainServerDCMessage(QString message) {domain_server_dc->SendString(message.toStdString());}
     void SendDomainServerDCMessage(QByteArray message) {domain_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
 
+    Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
+
 Q_SIGNALS:
 
     void Disconnected();
@@ -94,11 +96,12 @@ public Q_SLOTS:
     void StartDomainConnect();
 
     void SendStunRequest();
-    void ParseStunResponse();
     void SendIceRequest();
     void SendDomainIcePing();
     void SendDomainConnectRequest();
-    void ParseDomainResponse();
+    void ParseHifiResponse();
+
+    void SendHandshakeRequest();
 
     void ClientMessageReceived(const QString &message);
     void ClientDisconnected();
@@ -144,6 +147,7 @@ private:
 
     bool started_domain_connect;
     uint32_t sequence_number;
+    uint32_t last_sequence_number;
 
     QUuid session_id;
     quint16 local_id;
@@ -183,6 +187,13 @@ private:
 
     bool pinged;
     bool pingreplied;
+
+    std::unique_ptr<Packet> ack_packet;
+    std::unique_ptr<Packet>  handshake_ack;
+    uint32_t last_ack_received;
+    bool has_received_handshake;
+    bool has_received_handshake_ack;
+    bool did_request_handshake;
 };
 
 #endif // HIFICONNECTION_H

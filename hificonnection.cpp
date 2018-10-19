@@ -27,11 +27,11 @@ HifiConnection::HifiConnection(QWebSocket * s)
     static const int ACK_PACKET_PAYLOAD_BYTES = sizeof(uint32_t);
     static const int HANDSHAKE_ACK_PAYLOAD_BYTES = sizeof(uint32_t);
     ack_packet = Packet::CreateControl(sequence_number, ControlType::ACK, ACK_PACKET_PAYLOAD_BYTES);
-    QByteArray b(ack_packet->GetData(), ack_packet->GetDataSize());
-    qDebug() << "ack_packet" << b;
+    //QByteArray b(ack_packet->GetData(), ack_packet->GetDataSize());
+    //qDebug() << "ack_packet" << b;
     handshake_ack = Packet::CreateControl(sequence_number, ControlType::HandshakeACK, HANDSHAKE_ACK_PAYLOAD_BYTES);
-    QByteArray a(handshake_ack->GetData(), handshake_ack->GetDataSize());
-    qDebug() << "handshake_ack" << a;
+    //QByteArray a(handshake_ack->GetData(), handshake_ack->GetDataSize());
+    //qDebug() << "handshake_ack" << a;
 
     qDebug() << "HifiConnection::HifiConnection() - Synchronously looking up IP address for hostname" << stun_server_hostname;
     QHostInfo result_stun = QHostInfo::fromName(stun_server_hostname);

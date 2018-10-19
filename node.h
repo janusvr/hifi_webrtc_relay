@@ -97,9 +97,11 @@ public:
 
     void HandleControlPacket(Packet * control_packet);
     void SendHandshakeRequest();
+    bool GetHasReceivedHandshakeAck() {return has_received_handshake_ack;}
 
 Q_SIGNALS:
     void Disconnected();
+    void HandshakeAckReceived();
 
 public Q_SLOTS:
     void SendNegotiateAudioFormat();

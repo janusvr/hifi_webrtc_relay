@@ -62,3 +62,5 @@ unix:macx:LIBS += -framework IOKit -framework CoreFoundation -framework Foundati
 
 CONFIG += openssl-linked
 CONFIG += no_keywords
+
+DISTFILES += test/rtc-test/*

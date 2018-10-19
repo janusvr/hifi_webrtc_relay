@@ -122,11 +122,6 @@ void Node::SendPing()
 
 void Node::Ping(quint8 ping_type)
 {
-    if (!has_received_handshake_ack) {
-        SendHandshakeRequest();
-        return;
-    }
-
     quint64 timestamp = Utils::GetTimestamp(); // in usec
     int64_t connection_id = 0;
 
@@ -147,11 +142,6 @@ void Node::Ping(quint8 ping_type)
 }
 void Node::PingReply(Packet * packet, QHostAddress sender, quint16 sender_port)
 {
-    if (!has_received_handshake_ack) {
-        SendHandshakeRequest();
-        return;
-    }
-
     const char * message = packet->readAll().constData();
 
     quint8 type_from_original_ping;
@@ -303,6 +293,7 @@ void Node::HandleControlPacket(Packet * control_packet)
             if (initial_sequence_number == sequence_number) {
                 // indicate that handshake ACK was received
                 has_received_handshake_ack = true;
+                Q_EMIT HandshakeAckReceived();
             }
             break;
         }

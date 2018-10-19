@@ -396,7 +396,7 @@ public:
         open(QIODevice::ReadWrite);
 
         WriteControlType();
-        write(reinterpret_cast<const char*>(&sequence_number), sizeof(uint32_t));
+        //write(reinterpret_cast<const char*>(&sequence_number), sizeof(uint32_t));
     }
     Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
 
@@ -412,7 +412,8 @@ public:
 
     static std::unique_ptr<Packet> CreateControl(uint32_t sequence, ControlType t, qint64 size = -1)
     {
-        return std::unique_ptr<Packet>(new Packet(sequence, t, HeaderSize(false) + Packet::LocalControlHeaderSize() + size));
+        //return std::unique_ptr<Packet>(new Packet(sequence, t, HeaderSize(false) + Packet::LocalControlHeaderSize() + size));
+        return std::unique_ptr<Packet>(new Packet(sequence, t, Packet::LocalControlHeaderSize() + size));
     }
     static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
     {
@@ -463,6 +464,7 @@ public:
 
     PacketType GetType() {return type;}
     ControlType GetControlType() {return control_type;}
+    bool GetIsReliable() const {return is_reliable;}
     bool GetIsPartOfMessage() const {return is_part_of_message;}
     uint32_t GetSequenceNumber() {return sequence_number;}
 

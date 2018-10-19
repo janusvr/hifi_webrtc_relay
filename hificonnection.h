@@ -31,6 +31,29 @@
 
 #include <rtcdcpp/PeerConnection.hpp>
 
+class PendingDatagram: public QObject
+{
+    Q_OBJECT
+
+public:
+    PendingDatagram(QByteArray b, QHostAddress a, quint16 p)
+    {
+        data = b;
+        sender = a;
+        sender_port = p;
+    }
+    ~PendingDatagram() {}
+
+    QByteArray GetDatagram() {return data;}
+    QHostAddress GetSender() {return sender;}
+    quint16 GetSenderPort() {return sender_port;}
+
+private:
+    QByteArray data;
+    QHostAddress sender;
+    quint16 sender_port;
+};
+
 class HifiConnection : public QObject
 {
     Q_OBJECT
@@ -71,6 +94,10 @@ public:
 
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
+    void SendHandshakeRequest();
+
+    void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);
+
 Q_SIGNALS:
 
     void Disconnected();
@@ -80,6 +107,8 @@ Q_SIGNALS:
     void StunFinished();
     void IceFinished();
     void DomainIcePingFinished();
+
+    void DomainServerHasReceivedHandshakeAck();
 
 public Q_SLOTS:
 
@@ -100,8 +129,7 @@ public Q_SLOTS:
     void SendDomainIcePing();
     void SendDomainConnectRequest();
     void ParseHifiResponse();
-
-    void SendHandshakeRequest();
+    void ParsePendingDatagrams();
 
     void ClientMessageReceived(const QString &message);
     void ClientDisconnected();
@@ -194,6 +222,8 @@ private:
     bool has_received_handshake;
     bool has_received_handshake_ack;
     bool did_request_handshake;
+
+    QList <PendingDatagram *> pending_datagrams;
 };
 
 #endif // HIFICONNECTION_H

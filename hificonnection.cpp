@@ -626,7 +626,7 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
             Q_EMIT DomainIcePingFinished();
         }
     }
-    else if (response_packet->GetType() == PacketType::DomainList) {
+    else if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
         qDebug() << "HifiConnection::ParseHifiResponse() - Process domain list";
         QDataStream packet_stream(response_packet->readAll());
 
@@ -634,7 +634,7 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         QUuid domain_uuid;
         packet_stream >> domain_uuid;
 
-        if (domain_connected && domain_id != domain_uuid) {
+        if (domain_id != domain_uuid) {
             // Recieved packet from different domain.
             qDebug() << "HifiConnection::ParseHifiResponse() - Received packet from different domain";
             return;
@@ -649,10 +649,8 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         packet_stream >> local_id;
 
         // if this was the first domain-server list from this domain, we've now connected
-        if (!domain_connected) {
-            hifi_response_timer->stop();
-            domain_connected = true;
-        }
+        hifi_response_timer->stop();
+        domain_connected = true;
 
         // pull the permissions/right/privileges for this node out of the stream
         uint new_permissions;
@@ -935,6 +933,8 @@ void HifiConnection::SendDomainIcePing()
     //SendIcePing((quint8) 1);
     SendIcePing((quint8) 2);
 
+    if (domain_connected) SendDomainListRequest();
+
     if (messages_mixer) messages_mixer->SendPing();
     if (avatar_mixer) avatar_mixer->SendPing();
     if (audio_mixer) audio_mixer->SendPing();
@@ -986,6 +986,20 @@ void HifiConnection::SendDomainConnectRequest()
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
     sequence_number++;
+}
+
+void HifiConnection::SendDomainListRequest()
+{
+    if (!finished_domain_id_request) {
+        return;
+    }
+
+    std::unique_ptr<Packet> domainListRequestPacket = Packet::Create(sequence_number,PacketType::DomainListRequest);
+    QDataStream domainListDataStream(domainListRequestPacket.get());
+    //qDebug() << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
+    domainListDataStream << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
+    domainListRequestPacket->WriteSourceID(local_id);
+    hifi_socket->writeDatagram(domainListRequestPacket->GetData(), domainListRequestPacket->GetDataSize(), domain_public_address, domain_public_port);
 }
 
 void HifiConnection::SendIcePing(quint8 ping_type)

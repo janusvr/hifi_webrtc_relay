@@ -95,6 +95,7 @@ public:
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
     void SendHandshakeRequest();
+    void SendDomainListRequest();
 
     void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);
 

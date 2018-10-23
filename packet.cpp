@@ -85,7 +85,7 @@ uint qHash(const PacketType& key, uint seed) {
     return qHash((quint8) key, seed);
 }
 
-Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
+Packet::Packet(uint32_t sequence, PacketType t, qint64 size, bool reliable, bool part_of_message)
 {
     type = t;
     version = VersionForPacketType(t);
@@ -96,10 +96,19 @@ Packet::Packet(uint32_t sequence, PacketType t, qint64 size)
     packet.reset(new char[packet_size]());
     payload_start = packet.get();
     sequence_number = sequence;
-    is_part_of_message = false;
+    is_reliable = reliable;
+    is_part_of_message = part_of_message;
 
     // Pack the sequence number
-    memcpy(packet.get(), &sequence_number, sizeof(uint32_t));
+    uint32_t *seq_num_bit_field = &sequence_number;
+    if (is_reliable) {
+        *seq_num_bit_field |= RELIABILITY_BIT_MASK;
+    }
+    if (is_part_of_message) {
+        *seq_num_bit_field |= MESSAGE_BIT_MASK;
+    }
+
+    memcpy(packet.get(), seq_num_bit_field, sizeof(uint32_t));
 
     // Pack the packet type
     memcpy(packet.get() + sizeof(uint32_t), &type, sizeof(PacketType));
@@ -139,6 +148,7 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
     //qDebug() << is_reliable << is_part_of_message << obfuscation_level << sequence_number;
 
     if (is_part_of_message) {
+        //qDebug() << "part of message";
         uint32_t* message_number_and_bitfield = seq_num_bit_field + 1;
 
         message_number = *message_number_and_bitfield & MESSAGE_NUMBER_MASK;
@@ -152,6 +162,7 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
     AdjustPayloadStartAndCapacity(Packet::HeaderSize(is_part_of_message), payload_size > 0);
 
     if (obfuscation_level != Packet::NoObfuscation) {
+        //qDebug() << "unobfuscating";
         Obfuscate(Packet::NoObfuscation); // Undo obfuscation
     }
 
@@ -263,6 +274,7 @@ void Packet::Obfuscate(ObfuscationLevel level) {
         int size = GetDataSize() - HeaderSize(is_part_of_message);
         char * current = GetData() + HeaderSize(is_part_of_message);
         auto xor_value = reinterpret_cast<const char*>(&obfuscation_key);
+
         for (int i = 0; i < size; ++i) {
             *(current++) ^= *(xor_value + (i % sizeof(uint64_t)));
         }

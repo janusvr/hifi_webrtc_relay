@@ -87,8 +87,8 @@ public:
     void SetNegotiatedAudioFormat(bool b);
     void StartNegotiateAudioFormat();
 
-    void SendMessageToServer(QString message) {node_socket->write(message.toLatin1());}
-    void SendMessageToServer(QByteArray message) {node_socket->write(message);}
+    void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1());}
+    void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message);}
 
     void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
     void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}

@@ -571,16 +571,25 @@ void HifiConnection::ParseHifiResponse()
 
         //Domain Server or Node response (add to queue if packet is reliable and we haven't received a handshake)
         if (response_packet->GetIsReliable()) {
+            //qDebug() << "is reliable";
             if (sender.toIPv4Address() == domain_public_address.toIPv4Address() && sender_port == domain_public_port && !has_received_handshake_ack) {
+                //qDebug() << "sending domain handshake";
                 SendHandshakeRequest();
                 pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
+
+                //Send packet regardless
+                SendDomainServerDCMessage(datagram);
                 continue;
             }
             else {
+                //qDebug() << "sending node handshake";
                 Node * node = GetNodeFromAddress(sender, sender_port);
                 if (node && node->GetHasReceivedHandshakeAck()) {
                     node->SendHandshakeRequest();
                     pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
+
+                    //Send packet regardless
+                    node->SendMessageToClient(datagram);
                     continue;
                 }
             }

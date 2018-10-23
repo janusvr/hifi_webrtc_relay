@@ -379,7 +379,7 @@ public:
         ObfuscationL3 = 0x3, // 11
     };
 
-    Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE);
+    Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE, bool reliable = false, bool part_of_message = false);
     Packet(uint32_t sequence, ControlType t, qint64 size = MAX_PACKET_SIZE){
         control_type = t;
 

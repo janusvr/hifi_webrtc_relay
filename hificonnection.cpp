@@ -526,7 +526,6 @@ void HifiConnection::ParseHifiResponse()
                         //qDebug() << "handshake ack" << seq << initial_sequence_number;
                         if (seq == initial_sequence_number) {
                             // indicate that handshake ACK was received
-                            qDebug() << "FINISHED HANDSHAKE";
                             has_received_handshake_ack = true;
                             Q_EMIT DomainServerHasReceivedHandshakeAck();
                         }
@@ -1079,7 +1078,7 @@ void HifiConnection::SendHandshake()
 {
     auto handshake_packet = Packet::CreateControl(initial_sequence_number, ControlType::Handshake, sizeof(initial_sequence_number));
     handshake_packet->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(initial_sequence_number));
-    hifi_socket->writeDatagram(handshake_packet->GetData(), handshake_packet->GetDataSize(), public_address, public_port);
+    hifi_socket->writeDatagram(handshake_packet->GetData(), handshake_packet->GetDataSize(), domain_public_address, domain_public_port);
     //QByteArray b(handshake_packet->GetData(), handshake_packet->GetDataSize());
     //qDebug() << "handshake" << b;
 }

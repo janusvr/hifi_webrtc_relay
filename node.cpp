@@ -297,7 +297,6 @@ void Node::HandleControlPacket(Packet * control_packet)
             if (seq == initial_sequence_number) {
                 // indicate that handshake ACK was received
                 has_received_handshake_ack = true;
-                //qDebug() << "FINISHED HANDSHAKE" << GetNodeType();
                 Q_EMIT HandshakeAckReceived();
             }
             break;

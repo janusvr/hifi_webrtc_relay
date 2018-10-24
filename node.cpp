@@ -13,6 +13,10 @@ Node::Node()
     static std::mt19937 generator(rd());
     static std::uniform_int_distribution<> distribution(0, 0x07FFFFFF);
     sequence_number = distribution(generator);
+    initial_sequence_number = sequence_number;
+    initial_receive_sequence_number = 0;
+    last_sequence_number = 0;
+    last_receive_sequence_number = 0;
 
     has_received_handshake_ack = false;
     did_request_handshake = false;
@@ -239,10 +243,10 @@ bool Node::CheckNodeAddress(QHostAddress a, quint16 p)
 
 void Node::HandleControlPacket(Packet * control_packet)
 {
-    qDebug() << "NODE HANDLE PACKET";
+    //qDebug() << "NODE HANDLE PACKET";
     switch (control_packet->GetControlType()) {
         case ControlType::ACK: {
-        qDebug() << "RECEIVED CONTROL ACK";
+        //qDebug() << "RECEIVED CONTROL ACK";
             if (has_received_handshake_ack) {
                 // read the ACKed sequence number
                 uint32_t ack;
@@ -260,19 +264,19 @@ void Node::HandleControlPacket(Packet * control_packet)
             break;
         }
         case ControlType::Handshake: {
-        qDebug() << "RECEIVED CONTROL HANDSHAKE";
-            uint32_t initial_sequence_number;
-            control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+        //qDebug() << "RECEIVED CONTROL HANDSHAKE";
+            uint32_t seq;
+            control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
 
-            if (!has_received_handshake || initial_sequence_number != sequence_number) {
+            if (!has_received_handshake || seq != initial_receive_sequence_number) {
                 // server sent us a handshake - we need to assume this means state should be reset
                 // as long as we haven't received a handshake yet or we have and we've received some data
-                sequence_number = initial_sequence_number;
-                last_sequence_number = initial_sequence_number - 1;
+                initial_receive_sequence_number = seq;
+                last_receive_sequence_number = seq - 1;
             }
 
             handshake_ack->reset();
-            handshake_ack->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(uint32_t));
+            handshake_ack->write(reinterpret_cast<const char*>(&seq), sizeof(uint32_t));
             node_socket->writeDatagram(handshake_ack->GetData(), handshake_ack->GetDataSize(), public_address, public_port);
 
             // indicate that handshake has been received
@@ -284,21 +288,22 @@ void Node::HandleControlPacket(Packet * control_packet)
             break;
         }
         case ControlType::HandshakeACK: {
-        qDebug() << "RECEIVED CONTROL HANDSHAKE ACK";
+        //qDebug() << "RECEIVED CONTROL HANDSHAKE ACK";
             // if we've decided to clean up the send queue then this handshake ACK should be ignored, it's useless
-            uint32_t initial_sequence_number;
-            control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+            uint32_t seq;
+            control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
 
-            qDebug() << "handshake ack" << initial_sequence_number << sequence_number;
-            if (initial_sequence_number == sequence_number) {
+            //qDebug() << "handshake ack" << seq << initial_sequence_number;
+            if (seq == initial_sequence_number) {
                 // indicate that handshake ACK was received
                 has_received_handshake_ack = true;
+                //qDebug() << "FINISHED HANDSHAKE" << GetNodeType();
                 Q_EMIT HandshakeAckReceived();
             }
             break;
         }
         case ControlType::HandshakeRequest: {
-        qDebug() << "RECEIVED HANDSHAKE REQUEST";
+        //qDebug() << "RECEIVED HANDSHAKE REQUEST";
             if (has_received_handshake_ack) {
                 // We're already in a state where we've received a handshake ack, so we are likely in a state
                 // where the other end expired our connection. Let's reset.
@@ -307,6 +312,15 @@ void Node::HandleControlPacket(Packet * control_packet)
             break;
         }
     }
+}
+
+void Node::SendHandshake()
+{
+    auto handshake_packet = Packet::CreateControl(initial_sequence_number, ControlType::Handshake, sizeof(initial_sequence_number));
+    handshake_packet->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(initial_sequence_number));
+    node_socket->writeDatagram(handshake_packet->GetData(), handshake_packet->GetDataSize(), public_address, public_port);
+    //QByteArray b(handshake_packet->GetData(), handshake_packet->GetDataSize());
+    //qDebug() << "handshake" << b;
 }
 
 void Node::SendHandshakeRequest()

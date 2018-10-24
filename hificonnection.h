@@ -95,6 +95,7 @@ public:
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
     void SendHandshakeRequest();
+    void SendHandshake();
     void SendDomainListRequest();
 
     void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);
@@ -175,8 +176,6 @@ private:
     NodeSet node_types_of_interest;
 
     bool started_domain_connect;
-    uint32_t sequence_number;
-    uint32_t last_sequence_number;
 
     QUuid session_id;
     quint16 local_id;
@@ -216,6 +215,12 @@ private:
 
     bool pinged;
     bool pingreplied;
+
+    uint32_t sequence_number;
+    uint32_t initial_sequence_number;
+    uint32_t initial_receive_sequence_number;
+    uint32_t last_sequence_number;
+    uint32_t last_receive_sequence_number;
 
     std::unique_ptr<Packet> ack_packet;
     std::unique_ptr<Packet>  handshake_ack;

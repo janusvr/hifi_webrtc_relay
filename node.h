@@ -87,8 +87,8 @@ public:
     void SetNegotiatedAudioFormat(bool b);
     void StartNegotiateAudioFormat();
 
-    void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1());}
-    void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message);}
+    void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1(), public_address, public_port);}
+    void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message, public_address, public_port);}
 
     void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
     void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
@@ -96,6 +96,7 @@ public:
     bool CheckNodeAddress(QHostAddress a, quint16 p);
 
     void HandleControlPacket(Packet * control_packet);
+    void SendHandshake();
     void SendHandshakeRequest();
     bool GetHasReceivedHandshakeAck() {return has_received_handshake_ack;}
 
@@ -128,7 +129,10 @@ private:
     QTimer * hifi_response_timer;
 
     uint32_t sequence_number;
+    uint32_t initial_sequence_number;
+    uint32_t initial_receive_sequence_number;
     uint32_t last_sequence_number;
+    uint32_t last_receive_sequence_number;
 
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;

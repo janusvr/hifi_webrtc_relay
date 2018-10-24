@@ -23,6 +23,10 @@ HifiConnection::HifiConnection(QWebSocket * s)
     static std::mt19937 generator(rd());
     static std::uniform_int_distribution<> distribution(0, 0x07FFFFFF);
     sequence_number = distribution(generator);
+    initial_sequence_number = sequence_number;
+    initial_receive_sequence_number = 0;
+    last_sequence_number = 0;
+    last_receive_sequence_number = 0;
 
     static const int ACK_PACKET_PAYLOAD_BYTES = sizeof(uint32_t);
     static const int HANDSHAKE_ACK_PAYLOAD_BYTES = sizeof(uint32_t);
@@ -469,6 +473,7 @@ void HifiConnection::ParseHifiResponse()
                 node->SendMessageToClient(datagram);
             }
             else {
+                //qDebug() << "RECEIVED CONTROL DOMAIN PACKET";
                 switch (control_packet->GetControlType()) {
                     case ControlType::ACK: {
                     //qDebug() << "RECEIVED CONTROL ACK";
@@ -481,7 +486,7 @@ void HifiConnection::ParseHifiResponse()
                                 // this is an out of order ACK, bail
                                 // or
                                 // processing an already received ACK, bail
-                                return;
+                                continue;
                             }
 
                             last_ack_received = ack;
@@ -490,18 +495,18 @@ void HifiConnection::ParseHifiResponse()
                     }
                     case ControlType::Handshake: {
                     //qDebug() << "RECEIVED CONTROL HANDSHAKE";
-                        uint32_t initial_sequence_number;
-                        control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+                        uint32_t seq;
+                        control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
 
-                        if (!has_received_handshake || initial_sequence_number != sequence_number) {
+                        if (!has_received_handshake || seq != initial_receive_sequence_number) {
                             // server sent us a handshake - we need to assume this means state should be reset
                             // as long as we haven't received a handshake yet or we have and we've received some data
-                            sequence_number = initial_sequence_number;
-                            last_sequence_number = initial_sequence_number - 1;
+                            initial_receive_sequence_number = seq;
+                            last_receive_sequence_number = seq - 1;
                         }
 
                         handshake_ack->reset();
-                        handshake_ack->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(uint32_t));
+                        handshake_ack->write(reinterpret_cast<const char*>(&seq), sizeof(uint32_t));
                         hifi_socket->writeDatagram(handshake_ack->GetData(), handshake_ack->GetDataSize(), domain_public_address, domain_public_port);
 
                         // indicate that handshake has been received
@@ -515,12 +520,13 @@ void HifiConnection::ParseHifiResponse()
                     case ControlType::HandshakeACK: {
                     //qDebug() << "RECEIVED CONTROL HANDSHAKE ACK";
                         // if we've decided to clean up the send queue then this handshake ACK should be ignored, it's useless
-                        uint32_t initial_sequence_number;
-                        control_packet->read(reinterpret_cast<char*>(&initial_sequence_number), sizeof(uint32_t));
+                        uint32_t seq;
+                        control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
 
-                        qDebug() << "handshake ack" << initial_sequence_number << sequence_number;
-                        if (initial_sequence_number == sequence_number) {
+                        //qDebug() << "handshake ack" << seq << initial_sequence_number;
+                        if (seq == initial_sequence_number) {
                             // indicate that handshake ACK was received
+                            qDebug() << "FINISHED HANDSHAKE";
                             has_received_handshake_ack = true;
                             Q_EMIT DomainServerHasReceivedHandshakeAck();
                         }
@@ -584,7 +590,7 @@ void HifiConnection::ParseHifiResponse()
             else {
                 //qDebug() << "sending node handshake";
                 Node * node = GetNodeFromAddress(sender, sender_port);
-                if (node && node->GetHasReceivedHandshakeAck()) {
+                if (node && !node->GetHasReceivedHandshakeAck()) {
                     node->SendHandshakeRequest();
                     pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
 
@@ -942,14 +948,35 @@ void HifiConnection::SendDomainIcePing()
     //SendIcePing((quint8) 1);
     SendIcePing((quint8) 2);
 
-    if (domain_connected) SendDomainListRequest();
+    if (domain_connected) {
+        if (!has_received_handshake_ack) SendHandshake();
+        SendDomainListRequest();
+    }
 
-    if (messages_mixer) messages_mixer->SendPing();
-    if (avatar_mixer) avatar_mixer->SendPing();
-    if (audio_mixer) audio_mixer->SendPing();
-    if (entity_script_server) entity_script_server->SendPing();
-    if (entity_server) entity_server->SendPing();
-    if (asset_server) asset_server->SendPing();
+    if (messages_mixer) {
+        if (!messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
+        messages_mixer->SendPing();
+    }
+    if (avatar_mixer) {
+        if (!avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
+        avatar_mixer->SendPing();
+    }
+    if (audio_mixer) {
+        if (!audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
+        audio_mixer->SendPing();
+    }
+    if (entity_script_server) {
+        if (!entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
+        entity_script_server->SendPing();
+    }
+    if (entity_server) {
+        if (!entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
+        entity_server->SendPing();
+    }
+    if (asset_server) {
+        if (!asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
+        asset_server->SendPing();
+    }
 }
 
 void HifiConnection::SendDomainConnectRequest()
@@ -1048,13 +1075,22 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, qu
     sequence_number++;
 }
 
+void HifiConnection::SendHandshake()
+{
+    auto handshake_packet = Packet::CreateControl(initial_sequence_number, ControlType::Handshake, sizeof(initial_sequence_number));
+    handshake_packet->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(initial_sequence_number));
+    hifi_socket->writeDatagram(handshake_packet->GetData(), handshake_packet->GetDataSize(), public_address, public_port);
+    //QByteArray b(handshake_packet->GetData(), handshake_packet->GetDataSize());
+    //qDebug() << "handshake" << b;
+}
+
 void HifiConnection::SendHandshakeRequest()
 {
     auto handshake_request_packet = Packet::CreateControl(sequence_number, ControlType::HandshakeRequest, 0);
     hifi_socket->writeDatagram(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize(), domain_public_address, domain_public_port);
     QByteArray b(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize());
-    bool is_control_packet = *reinterpret_cast<uint32_t*>(handshake_request_packet->GetData()) & CONTROL_BIT_MASK;
-    qDebug() << "handshake" << b << is_control_packet;
+    //bool is_control_packet = *reinterpret_cast<uint32_t*>(handshake_request_packet->GetData()) & CONTROL_BIT_MASK;
+    //qDebug() << "handshake" << b << is_control_packet;
     did_request_handshake = true;
 }
 

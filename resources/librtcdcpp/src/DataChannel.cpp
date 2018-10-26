@@ -62,16 +62,16 @@ std::string DataChannel::GetProtocol() { return this->protocol; }
 void Close() { ; }
 
 bool DataChannel::SendString(std::string msg) {
-  std::cerr << "DC: Sending string: " << msg << std::endl;
+  //std::cerr << "DC: Sending string: " << msg << std::endl;
   this->pc->SendStrMsg(msg, this->stream_id);
   return true;
 }
 
 // TODO Take a shared_ptr to datachunk
 bool DataChannel::SendBinary(const uint8_t *msg, int len) {
-  std::cerr << "DC: Sending binary of len - " << len << std::endl;
+  //std::cerr << "DC: Sending binary of len - " << len << std::endl;
   this->pc->SendBinaryMsg(msg, len, this->stream_id);
-  std::cerr << "DC: Binary sent" << std::endl;
+  //std::cerr << "DC: Binary sent" << std::endl;
   return true;
 }
 

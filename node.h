@@ -9,10 +9,6 @@
 #include "packet.h"
 #include "utils.h"
 
-#define SPDLOG_DISABLED
-
-#include <rtcdcpp/PeerConnection.hpp>
-
 typedef quint8 NodeType_t;
 
 namespace NodeType {
@@ -65,6 +61,30 @@ public:
     ~Node();
 
     NodeType_t GetNodeType() {return node_type;}
+    QString GetNodeTypeString()
+    {
+        switch (node_type){
+            case NodeType::AudioMixer: {
+                return "audio";
+            }
+            case NodeType::AvatarMixer: {
+                return "avatar";
+            }
+            case NodeType::AssetServer: {
+                return "asset";
+            }
+            case NodeType::MessagesMixer: {
+                return "messages";
+            }
+            case NodeType::EntityScriptServer: {
+                return "entityscript";
+            }
+            case NodeType::EntityServer: {
+                return "entity";
+            }
+        }
+        return "";
+    }
 
     void SetSequenceNumber(uint32_t s) { if (s > sequence_number) sequence_number = s;}
 
@@ -78,8 +98,6 @@ public:
     void SetConnectionSecret(QUuid c);
     void SetPermissions(Permissions p);
 
-    void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel);
-
     void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
 
     void Ping(quint8 ping_type);
@@ -89,9 +107,6 @@ public:
 
     void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1(), public_address, public_port);}
     void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message, public_address, public_port);}
-
-    void SendMessageToClient(QString message) {data_channel->SendString(message.toStdString());}
-    void SendMessageToClient(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
 
     bool CheckNodeAddress(QHostAddress a, quint16 p);
 
@@ -137,8 +152,6 @@ private:
     bool started_negotiating_audio_format;
     bool negotiated_audio_format;
     int num_requests;
-
-    std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 
     std::unique_ptr<Packet> ack_packet;
     std::unique_ptr<Packet>  handshake_ack;

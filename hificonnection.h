@@ -1,4 +1,4 @@
-#ifndef HIFICONNECTION_H
+﻿#ifndef HIFICONNECTION_H
 #define HIFICONNECTION_H
 
 #include <QObject>
@@ -74,29 +74,33 @@ public:
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
-    void SetDomainServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {domain_server_dc = d;}
-    void SetAudioMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {audio_mixer_dc = d;}
-    void SetAvatarMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {avatar_mixer_dc = d;}
-    void SetMessagesMixerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {messages_mixer_dc = d;}
-    void SetAssetServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {asset_server_dc = d;}
-    void SetEntityServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_server_dc = d;}
-    void SetEntityScriptServerDC(std::shared_ptr<rtcdcpp::DataChannel> d) {entity_script_server_dc = d;}
+    void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> d) {data_channel = d;}
 
     bool DataChannelsReady(){
-        return (domain_server_dc && audio_mixer_dc && avatar_mixer_dc && messages_mixer_dc && entity_server_dc && entity_script_server_dc && asset_server_dc);
+        return (data_channel != nullptr);
     }
 
     void SendDomainServerMessage(QString message) {hifi_socket->writeDatagram(message.toLatin1(), domain_public_address, domain_public_port);}
     void SendDomainServerMessage(QByteArray message) {hifi_socket->writeDatagram(message, domain_public_address, domain_public_port);}
 
-    void SendDomainServerDCMessage(QString message) {domain_server_dc->SendString(message.toStdString());}
-    void SendDomainServerDCMessage(QByteArray message) {domain_server_dc->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendClientMessage(QString message) {data_channel->SendString(message.toStdString());}
+    void SendClientMessage(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
 
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
     void SendHandshakeRequest();
     void SendHandshake();
     void SendDomainListRequest();
+
+    void SendMessageToNode(QString node_type, const QByteArray data) {
+        QJsonObject packet;
+        packet["server"] = node_type;
+        packet["data"] = QLatin1String(data.toBase64());
+        QJsonDocument packet_doc(packet);
+        QByteArray d = packet_doc.toJson(QJsonDocument::Compact);
+        //qDebug() << data << QByteArray::fromBase64(packet["data"].toString().toLatin1()) << (data == QByteArray::fromBase64(packet["data"].toString().toLatin1()));
+        SendClientMessage(QString::fromStdString(d.toStdString()));
+    }
 
     void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);
 
@@ -192,13 +196,7 @@ private:
     QWebSocket * client_socket;
     std::shared_ptr<rtcdcpp::PeerConnection> remote_peer_connection;
 
-    std::shared_ptr<rtcdcpp::DataChannel> domain_server_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> audio_mixer_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> avatar_mixer_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> messages_mixer_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> entity_server_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> entity_script_server_dc;
-    std::shared_ptr<rtcdcpp::DataChannel> asset_server_dc;
+    std::shared_ptr<rtcdcpp::DataChannel> data_channel;
 
     bool finished_domain_id_request;
     QString domain_name;

@@ -203,38 +203,6 @@ void Node::SendNegotiateAudioFormat()
     sequence_number++;
 }
 
-void Node::SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> channel)
-{
-    if (channel == nullptr) {
-        data_channel = channel;
-        return;
-    }
-
-    std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
-        QString m = QString::fromStdString(message);
-        qDebug() << "Node::onMessage() - " << (char) this->GetNodeType() << m;
-        this->SendMessageToServer(m);
-    };
-    channel->SetOnStringMsgCallback(onStringMessageCallback);
-
-    std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
-        QByteArray m = QByteArray((char *) message->Data(), message->Length());
-        qDebug() << "Node::onMessage() - " << (char) this->GetNodeType() << m;
-        this->SendMessageToServer(m);
-    };
-    channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
-
-    std::function<void()> onClosed = [this]() {
-        qDebug() << "Node::onClosed() - Data channel closed" << (char) node_type;
-        this->SetDataChannel(nullptr);
-        Q_EMIT Disconnected();
-    };
-    channel->SetOnClosedCallback(onClosed);
-
-    data_channel = channel;
-    //SendMessageToClient(QString("node_message"));
-}
-
 bool Node::CheckNodeAddress(QHostAddress a, quint16 p)
 {
     //qDebug() << a.toIPv4Address()<< public_address.toIPv4Address() << p << public_port;

@@ -1,11 +1,5 @@
 var signalServer = new WebSocket('ws://localhost:8118');
-var domain_sendChannel;
-var audio_sendChannel;
-var avatar_sendChannel;
-var entity_sendChannel;
-var entityscript_sendChannel;
-var messages_sendChannel;
-var asset_sendChannel;
+var datachannel;
 var remoteCandidates = [];
 var have_answer = false;
 var id;
@@ -37,39 +31,18 @@ function iceCallback(event) {
     }
 }
 
-function domainMessage(event) {
-    console.log('domain_server message ' + event.data);
-    //domain_sendChannel.send('domain_message');
-}
+function relayMessage(event) {
+    var msg = JSON.parse(event.data);
+    console.log('relay message ' + msg.server + ' ' + msg.data + '\n');
+    var data = window.atob(msg.data);
 
-function audioMixerMessage(event) {
-    console.log('audio message ' + event.data);
-    //audio_sendChannel.send('audio_message');
-}
+    /*var hex = '';
+    for(var i=0;i<data.length;i++) {
+        hex += '/x'+data.charCodeAt(i).toString(16);
+    }
+    console.log('decoded data ' + hex + '\n');*/
 
-function avatarMixerMessage(event) {
-    console.log('avatar message ' + event.data);
-    //avatar_sendChannel.send('avatar_message');
-}
-
-function entityServerMessage(event) {
-    console.log('entity message ' + event.data);
-    //entity_sendChannel.send('entity_message');
-}
-
-function entityScriptServerMessage(event) {
-    console.log('entity script message ' + event.data);
-    //entityscript_sendChannel.send('entity_script_message');
-}
-
-function messagesMixerMessage(event) {
-    console.log('messages message ' + event.data);
-    //messages_sendChannel.send('messages_message');
-}
-
-function assetServerMessage(event) {
-    console.log('asset message ' + event.data);
-    //asset_sendChannel.send('asset_message');
+    //datachannel.send(event.data);
 }
 
 signalServer.onmessage = function (event) {
@@ -103,20 +76,8 @@ signalServer.onmessage = function (event) {
                                                                                ]}]}, pcConstraint);
             console.log('Created local peer connection object localConnection');
 
-            domain_sendChannel = localConnection.createDataChannel('domain_server_dc', dataConstraint);
-            domain_sendChannel.onmessage = domainMessage;
-            audio_sendChannel = localConnection.createDataChannel('audio_mixer_dc', dataConstraint);
-            audio_sendChannel.onmessage = audioMixerMessage;
-            avatar_sendChannel = localConnection.createDataChannel('avatar_mixer_dc', dataConstraint);
-            avatar_sendChannel.onmessage = avatarMixerMessage;
-            entity_sendChannel = localConnection.createDataChannel('entity_server_dc', dataConstraint);
-            entity_sendChannel.onmessage = entityServerMessage;
-            entityscript_sendChannel = localConnection.createDataChannel('entity_script_server_dc', dataConstraint);
-            entityscript_sendChannel.onmessage = entityScriptServerMessage;
-            messages_sendChannel = localConnection.createDataChannel('messages_mixer_dc', dataConstraint);
-            messages_sendChannel.onmessage = messagesMixerMessage;
-            asset_sendChannel = localConnection.createDataChannel('asset_server_dc', dataConstraint);
-            asset_sendChannel.onmessage = assetServerMessage;
+            datachannel = localConnection.createDataChannel('datachannel', dataConstraint);
+            datachannel.onmessage = relayMessage;
 
             console.log('Created send data channel');
 

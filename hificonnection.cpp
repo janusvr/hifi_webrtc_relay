@@ -304,81 +304,73 @@ void HifiConnection::HifiConnect()
 {
     // Register Domain Server DC callbacks here
     std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
-        QString m = QString::fromStdString(message);
-        //qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
+        NodeType_t server = (NodeType_t) message.front();
+        QString packet = QString::fromStdString(message.substr(1,message.size() - 1));
+        //qDebug() << "HifiConnection::onMessage() - " << (char) server << packet << packet.size();
 
-        QJsonDocument doc;
-        doc = QJsonDocument::fromJson(m.toLatin1());
-        QJsonObject obj = doc.object();
-        QString server = obj["server"].toString();
-
-        if (server == "domain") {
+        if (server == NodeType::DomainServer) {
             //qDebug() << "domain";
-            this->SendDomainServerMessage(obj["data"].toString());
+            this->SendDomainServerMessage(packet);
         }
-        else if (server == "asset") {
+        else if (server == NodeType::AssetServer) {
             //qDebug() << "asset";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            asset_server->SendMessageToServer(packet);
         }
-        else if (server == "audio") {
+        else if (server == NodeType::AudioMixer) {
             //qDebug() << "audio";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            audio_mixer->SendMessageToServer(packet);
         }
-        else if (server == "avatar") {
+        else if (server == NodeType::AvatarMixer) {
             //qDebug() << "avatar";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            avatar_mixer->SendMessageToServer(packet);
         }
-        else if (server == "messages") {
+        else if (server == NodeType::MessagesMixer) {
             //qDebug() << "messages";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            messages_mixer->SendMessageToServer(packet);
         }
-        else if (server == "entity") {
+        else if (server == NodeType::EntityServer) {
             //qDebug() << "entity";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            entity_server->SendMessageToServer(packet);
         }
-        else if (server == "entityscript") {
+        else if (server == NodeType::EntityScriptServer) {
             //qDebug() << "entityscript";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            entity_script_server->SendMessageToServer(packet);
         }
     };
     data_channel->SetOnStringMsgCallback(onStringMessageCallback);
 
     std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
-        QByteArray m = QByteArray((char *) message->Data(), message->Length());
-        //qDebug() << "HifiConnection::onMessage() - Domain Server" << m;
+        NodeType_t server = (NodeType_t) message->Data()[0];
+        QByteArray packet = QByteArray((char *) (message->Data() + sizeof(NodeType_t)), message->Length() - 1);
+        //qDebug() << "HifiConnection::onMessage() - " << (char) server << packet << packet.size();
 
-        QJsonDocument doc;
-        doc = QJsonDocument::fromJson(m);
-        QJsonObject obj = doc.object();
-        QString server = obj["server"].toString();
-
-        if (server == "domain") {
+        if (server == NodeType::DomainServer) {
             //qDebug() << "domain";
-            this->SendDomainServerMessage(obj["data"].toString());
+            this->SendDomainServerMessage(packet);
         }
-        else if (server == "asset") {
+        else if (server == NodeType::AssetServer) {
             //qDebug() << "asset";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            asset_server->SendMessageToServer(packet);
         }
-        else if (server == "audio") {
+        else if (server == NodeType::AudioMixer) {
             //qDebug() << "audio";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            audio_mixer->SendMessageToServer(packet);
         }
-        else if (server == "avatar") {
+        else if (server == NodeType::AvatarMixer) {
             //qDebug() << "avatar";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            avatar_mixer->SendMessageToServer(packet);
         }
-        else if (server == "messages") {
+        else if (server == NodeType::MessagesMixer) {
             //qDebug() << "messages";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            messages_mixer->SendMessageToServer(packet);
         }
-        else if (server == "entity") {
+        else if (server == NodeType::EntityServer) {
             //qDebug() << "entity";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            entity_server->SendMessageToServer(packet);
         }
-        else if (server == "entityscript") {
+        else if (server == NodeType::EntityScriptServer) {
             //qDebug() << "entityscript";
-            asset_server->SendMessageToServer(obj["data"].toString());
+            entity_script_server->SendMessageToServer(packet);
         }
     };
     data_channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
@@ -501,7 +493,7 @@ void HifiConnection::ParseHifiResponse()
                         has_completed_current_request = true;
                         stun_response_timer->stop();
 
-                        SendMessageToNode("domain", datagram);
+                        SendMessageToNode(NodeType::DomainServer, datagram);
                         Q_EMIT StunFinished();
                         break;
                     }
@@ -530,7 +522,7 @@ void HifiConnection::ParseHifiResponse()
             Node * node = GetNodeFromAddress(sender, sender_port);
             if (node) {
                 node->HandleControlPacket(control_packet.get());
-                SendMessageToNode(node->GetNodeTypeString(), datagram);
+                SendMessageToNode(node->GetNodeType(), datagram);
             }
             else {
                 //qDebug() << "RECEIVED CONTROL DOMAIN PACKET";
@@ -601,7 +593,7 @@ void HifiConnection::ParseHifiResponse()
                         break;
                     }
                 }
-                SendMessageToNode("domain", datagram);
+                SendMessageToNode(NodeType::DomainServer, datagram);
             }
             continue;
         }
@@ -630,7 +622,7 @@ void HifiConnection::ParseHifiResponse()
                 Q_EMIT IceFinished();
             }
 
-            SendMessageToNode("domain", datagram);
+            SendMessageToNode(NodeType::DomainServer, datagram);
             continue;
         }
 
@@ -643,7 +635,7 @@ void HifiConnection::ParseHifiResponse()
                 pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
 
                 //Send packet regardless
-                SendMessageToNode("domain", datagram);
+                SendMessageToNode(NodeType::DomainServer, datagram);
                 continue;
             }
             else {
@@ -654,7 +646,7 @@ void HifiConnection::ParseHifiResponse()
                     pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
 
                     //Send packet regardless
-                    SendMessageToNode(node->GetNodeTypeString(), datagram);
+                    SendMessageToNode(node->GetNodeType(), datagram);
                     continue;
                 }
             }
@@ -680,7 +672,7 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
     if (response_packet->GetType() == PacketType::ICEPing) {
         //qDebug() << "HifiConnection::ParseHifiResponse() - Send ping reply";
         SendIcePingReply(response_packet.get(), sender, sender_port);
-        SendMessageToNode("domain", datagram);
+        SendMessageToNode(NodeType::DomainServer, datagram);
 
         pingreplied = true;
         if (pingreplied && pinged && !started_domain_connect)
@@ -691,7 +683,7 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
     }
     else if (response_packet->GetType() == PacketType::ICEPingReply) {
         //qDebug() << "HifiConnection::ParseHifiResponse() - Process ping reply";
-        SendMessageToNode("domain", datagram);
+        SendMessageToNode(NodeType::DomainServer, datagram);
 
         pinged = true;
         if (pingreplied && pinged && !started_domain_connect)
@@ -745,7 +737,7 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         }
 
         // Relay domain list packet over to client
-        SendMessageToNode("domain", datagram);
+        SendMessageToNode(NodeType::DomainServer, datagram);
     }
     else if (response_packet->GetType() == PacketType::DomainConnectionDenied) {
         uint8_t reasonCode;
@@ -762,13 +754,13 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
 
         qDebug() << "HifiConnection::ParseHifiResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
 
-        SendMessageToNode("domain", datagram);
+        SendMessageToNode(NodeType::DomainServer, datagram);
     }
     else if (response_packet->GetType() == PacketType::Ping) {
         Node * node = GetNodeFromAddress(sender, sender_port);
 
         if (node){
-            SendMessageToNode(node->GetNodeTypeString(), datagram);
+            SendMessageToNode(node->GetNodeType(), datagram);
             node->PingReply(response_packet.get(), sender, sender_port);
         }
     }
@@ -777,14 +769,14 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
 
         if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
             audio_mixer->SetNegotiatedAudioFormat(true);
-            SendMessageToNode(audio_mixer->GetNodeTypeString(), datagram);
+            SendMessageToNode(audio_mixer->GetNodeType(), datagram);
         }
     }
     else if (response_packet->GetType() == PacketType::PingReply) {
         Node * node = GetNodeFromAddress(sender, sender_port);
 
         if (node){
-            SendMessageToNode(node->GetNodeTypeString(), datagram);
+            SendMessageToNode(node->GetNodeType(), datagram);
 
             //qDebug() << "Node::RelayToClient() - Ping reply from: " << sender << sender_port;
             if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
@@ -797,10 +789,10 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         Node * node = GetNodeFromAddress(sender, sender_port);
 
         if (node) {
-            SendMessageToNode(node->GetNodeTypeString(), datagram);
+            SendMessageToNode(node->GetNodeType(), datagram);
         }
         else {
-            SendMessageToNode("domain", datagram);
+            SendMessageToNode(NodeType::DomainServer, datagram);
         }
     }
 }

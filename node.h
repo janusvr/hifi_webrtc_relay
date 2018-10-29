@@ -61,30 +61,6 @@ public:
     ~Node();
 
     NodeType_t GetNodeType() {return node_type;}
-    QString GetNodeTypeString()
-    {
-        switch (node_type){
-            case NodeType::AudioMixer: {
-                return "audio";
-            }
-            case NodeType::AvatarMixer: {
-                return "avatar";
-            }
-            case NodeType::AssetServer: {
-                return "asset";
-            }
-            case NodeType::MessagesMixer: {
-                return "messages";
-            }
-            case NodeType::EntityScriptServer: {
-                return "entityscript";
-            }
-            case NodeType::EntityServer: {
-                return "entity";
-            }
-        }
-        return "";
-    }
 
     void SetSequenceNumber(uint32_t s) { if (s > sequence_number) sequence_number = s;}
 

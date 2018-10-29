@@ -32,16 +32,7 @@ function iceCallback(event) {
 }
 
 function relayMessage(event) {
-    var msg = JSON.parse(event.data);
-    console.log('relay message ' + msg.server + ' ' + msg.data + '\n');
-    var data = window.atob(msg.data);
-
-    /*var hex = '';
-    for(var i=0;i<data.length;i++) {
-        hex += '/x'+data.charCodeAt(i).toString(16);
-    }
-    console.log('decoded data ' + hex + '\n');*/
-
+    console.log('relay message ' + event.data + '\n');
     //datachannel.send(event.data);
 }
 

@@ -92,14 +92,9 @@ public:
     void SendHandshake();
     void SendDomainListRequest();
 
-    void SendMessageToNode(QString node_type, const QByteArray data) {
-        QJsonObject packet;
-        packet["server"] = node_type;
-        packet["data"] = QLatin1String(data.toBase64());
-        QJsonDocument packet_doc(packet);
-        QByteArray d = packet_doc.toJson(QJsonDocument::Compact);
-        //qDebug() << data << QByteArray::fromBase64(packet["data"].toString().toLatin1()) << (data == QByteArray::fromBase64(packet["data"].toString().toLatin1()));
-        SendClientMessage(QString::fromStdString(d.toStdString()));
+    void SendMessageToNode(NodeType_t node_type, QByteArray data) {
+        data.push_front((char) node_type);
+        SendClientMessage(data);
     }
 
     void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);

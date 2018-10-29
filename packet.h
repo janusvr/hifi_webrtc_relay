@@ -213,7 +213,10 @@ enum class EntityVersion : PacketVersion {
     YieldSimulationOwnership,
     ParticleEntityFix,
     ParticleSpin,
-    BloomEffect
+    BloomEffect,
+    GrabProperties,
+    ScriptGlmVectors,
+    FixedLightSerialization
 };
 
 enum class EntityScriptCallMethodVersion : PacketVersion {
@@ -264,7 +267,8 @@ enum class AvatarMixerPacketVersion : PacketVersion {
     ProceduralFaceMovementFlagsAndBlendshapes,
     FarGrabJoints,
     MigrateSkeletonURLToTraits,
-    MigrateAvatarEntitiesToTraits
+    MigrateAvatarEntitiesToTraits,
+    FarGrabJointsRedux
 };
 
 enum class DomainConnectRequestVersion : PacketVersion {

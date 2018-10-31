@@ -756,14 +756,6 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
 
         SendMessageToNode(NodeType::DomainServer, datagram);
     }
-    else if (response_packet->GetType() == PacketType::Ping) {
-        Node * node = GetNodeFromAddress(sender, sender_port);
-
-        if (node){
-            SendMessageToNode(node->GetNodeType(), datagram);
-            node->PingReply(response_packet.get(), sender, sender_port);
-        }
-    }
     else if (response_packet->GetType() == PacketType::SelectedAudioFormat) {
         qDebug() << "Node::RelayToClient() - Negotiated audio format" << response_packet->ReadString();
 
@@ -836,7 +828,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
     //if (node->GetType() == NodeType::downstreamType(_ownerType) || node->GetType() == NodeType::upstreamType(_ownerType)) {
     //    node->setLastHeardMicrostamp(usecTimestampNow());
         node->ActivatePublicSocket(hifi_socket);
-        //node->sendPing();
     //}
 
     switch (node_type) {
@@ -845,7 +836,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             asset_server = node;
             connect(asset_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(asset_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //asset_server->SendPing();
             break;
         }
         case NodeType::AudioMixer : {
@@ -853,7 +843,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             audio_mixer = node;
             connect(audio_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(audio_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //audio_mixer->SendPing();
             break;
         }
         case NodeType::AvatarMixer : {
@@ -861,7 +850,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             avatar_mixer = node;
             connect(avatar_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(avatar_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //avatar_mixer->SendPing();
             break;
         }
         case NodeType::MessagesMixer : {
@@ -869,7 +857,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             messages_mixer = node;
             connect(messages_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(messages_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //messages_mixer->SendPing();
             break;
         }
         case NodeType::EntityServer : {
@@ -877,7 +864,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             entity_server = node;
             connect(entity_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(entity_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //entity_server->SendPing();
             break;
         }
         case NodeType::EntityScriptServer : {
@@ -885,7 +871,6 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             entity_script_server = node;
             connect(entity_script_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             connect(asset_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
-            //entity_script_server->SendPing();
             break;
         }
         default: {
@@ -998,30 +983,12 @@ void HifiConnection::SendDomainIcePing()
         SendDomainListRequest();
     }
 
-    if (messages_mixer) {
-        if (!messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
-        messages_mixer->SendPing();
-    }
-    if (avatar_mixer) {
-        if (!avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
-        avatar_mixer->SendPing();
-    }
-    if (audio_mixer) {
-        if (!audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
-        audio_mixer->SendPing();
-    }
-    if (entity_script_server) {
-        if (!entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
-        entity_script_server->SendPing();
-    }
-    if (entity_server) {
-        if (!entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
-        entity_server->SendPing();
-    }
-    if (asset_server) {
-        if (!asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
-        asset_server->SendPing();
-    }
+    if (messages_mixer && !messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
+    if (avatar_mixer && !avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
+    if (audio_mixer && !audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
+    if (entity_script_server && !entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
+    if (entity_server && !entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
+    if (asset_server && !asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
 }
 
 void HifiConnection::SendDomainConnectRequest()

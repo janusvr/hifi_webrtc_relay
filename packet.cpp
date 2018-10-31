@@ -142,8 +142,8 @@ Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
 
     is_reliable = (bool) (*seq_num_bit_field & RELIABILITY_BIT_MASK); // Only keep reliability bit
     is_part_of_message = (bool) (*seq_num_bit_field & MESSAGE_BIT_MASK); // Only keep message bit
-    obfuscation_level = (int)((*seq_num_bit_field & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
-    sequence_number = (uint32_t)(*seq_num_bit_field & SEQUENCE_NUMBER_MASK ); // Remove the bit field
+    obfuscation_level = (uint32_t)((*seq_num_bit_field & OBFUSCATION_LEVEL_MASK) >> OBFUSCATION_LEVEL_OFFSET);
+    sequence_number = (uint32_t)(*seq_num_bit_field & SEQUENCE_NUMBER_MASK); // Remove the bit field
 
     //qDebug() << is_reliable << is_part_of_message << obfuscation_level << sequence_number;
 

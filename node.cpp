@@ -118,57 +118,6 @@ void Node::StartNegotiateAudioFormat()
     }
 }
 
-void Node::SendPing()
-{
-    //Ping(1);
-    Ping(2);
-}
-
-void Node::Ping(quint8 ping_type)
-{
-    quint64 timestamp = Utils::GetTimestamp(); // in usec
-    int64_t connection_id = 0;
-
-    int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(int64_t);
-
-    std::unique_ptr<Packet> ping_packet = Packet::Create(sequence_number, PacketType::Ping, packet_size);
-
-    ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
-    ping_packet->write(reinterpret_cast<const char*>(&timestamp), sizeof(timestamp));
-    ping_packet->write(reinterpret_cast<const char*>(&connection_id), sizeof(connection_id));
-
-    ping_packet->WriteSourceID(domain_session_local_id);
-    ping_packet->WriteVerificationHash(authenticate_hash.get());
-
-    //qDebug() << "Node::SendPing() - Pinging to node: " << (char) node_type << ping_type << timestamp << connection_id << node_socket->peerAddress() << node_socket->peerPort() << ping_packet->GetDataSize();
-    node_socket->writeDatagram(ping_packet->GetData(), ping_packet->GetDataSize(), (ping_type == 1)?local_address:public_address, (ping_type == 1)?local_port:public_port);
-    sequence_number++;
-}
-void Node::PingReply(Packet * packet, QHostAddress sender, quint16 sender_port)
-{
-    const char * message = packet->readAll().constData();
-
-    quint8 type_from_original_ping;
-    quint64 time_from_original_ping;
-    quint64 time_now = Utils::GetTimestamp();
-    memcpy(&type_from_original_ping, message, sizeof(quint8));
-    memcpy(&time_from_original_ping, message + sizeof(type_from_original_ping), sizeof(quint64));
-    //qDebug() << type_from_original_ping << time_from_original_ping << time_now;
-
-    int packet_size = sizeof(quint8) + sizeof(quint64) + sizeof(quint64);
-    auto reply_packet = Packet::Create(sequence_number, PacketType::PingReply, packet_size);
-    reply_packet->write(reinterpret_cast<const char*>(&type_from_original_ping), sizeof(type_from_original_ping));
-    reply_packet->write(reinterpret_cast<const char*>(&time_from_original_ping), sizeof(time_from_original_ping));
-    reply_packet->write(reinterpret_cast<const char*>(&time_now), sizeof(time_now));
-
-    reply_packet->WriteSourceID(domain_session_local_id);
-    reply_packet->WriteVerificationHash(authenticate_hash.get());
-
-    //qDebug() << "Node::RelayToClient() - Ping reply to node: " << (char) node_type << type_from_original_ping << time_from_original_ping << time_now << sender << sender_port;
-    node_socket->writeDatagram(reply_packet->GetData(), reply_packet->GetDataSize(), sender, sender_port);
-    sequence_number++;
-}
-
 void Node::SendNegotiateAudioFormat()
 {
     if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)

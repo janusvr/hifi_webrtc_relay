@@ -76,8 +76,6 @@ public:
 
     void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
 
-    void Ping(quint8 ping_type);
-    void PingReply(Packet * packet, QHostAddress sender, quint16 sender_port);
     void SetNegotiatedAudioFormat(bool b);
     void StartNegotiateAudioFormat();
 
@@ -97,7 +95,6 @@ Q_SIGNALS:
 
 public Q_SLOTS:
     void SendNegotiateAudioFormat();
-    void SendPing();
 
 private:
     QUuid node_id;

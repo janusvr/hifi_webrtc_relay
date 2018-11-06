@@ -6,8 +6,6 @@ Node::Node()
 {
     authenticate_hash = nullptr;
     num_requests = 0;
-    started_negotiating_audio_format = false;
-    negotiated_audio_format = false;
 
     static std::random_device rd;
     static std::mt19937 generator(rd());
@@ -97,59 +95,6 @@ void Node::SetPermissions(Permissions p)
 void Node::ActivatePublicSocket(QSharedPointer<QUdpSocket> s)
 {
     node_socket = s;
-}
-
-void Node::SetNegotiatedAudioFormat(bool b)
-{
-    negotiated_audio_format = b;
-}
-
-void Node::StartNegotiateAudioFormat()
-{
-    if (!negotiated_audio_format && !started_negotiating_audio_format && node_type == NodeType::AudioMixer) {
-        // start the ping timer for this node
-        started_negotiating_audio_format = true;
-        num_requests = 0;
-
-        hifi_response_timer = new QTimer { this };
-        connect(hifi_response_timer, &QTimer::timeout, this, &Node::SendNegotiateAudioFormat);
-        hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
-        hifi_response_timer->start();
-    }
-}
-
-void Node::SendNegotiateAudioFormat()
-{
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
-        qDebug() << "Node::SendNegotiateAudioFormat() - Stopping negotiations of audio format";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
-        return;
-    }
-
-    if (!negotiated_audio_format) {
-        qDebug() << "Node::SendNegotiateAudioFormat() - Negotiating";
-        ++num_requests;
-    }
-    else {
-        qDebug() << "Node::SendNegotiateAudioFormat() - Completed negotiations";
-        hifi_response_timer->stop();
-        hifi_response_timer->deleteLater();
-        return;
-    }
-
-    auto negotiate_format_packet = Packet::Create(0,PacketType::NegotiateAudioFormat);
-    quint8 number_of_codecs = 2; //2 - pcm and zlib
-    negotiate_format_packet->write(reinterpret_cast<const char*>(&number_of_codecs), sizeof(number_of_codecs));
-    negotiate_format_packet->WriteString(QString("pcm"));
-    negotiate_format_packet->WriteString(QString("zlib"));
-
-    negotiate_format_packet->WriteSourceID(domain_session_local_id);
-    negotiate_format_packet->WriteVerificationHash(authenticate_hash.get());
-
-    node_socket->writeDatagram(negotiate_format_packet->GetData(), negotiate_format_packet->GetDataSize(), public_address, public_port);
-    sequence_number++;
 }
 
 bool Node::CheckNodeAddress(QHostAddress a, quint16 p)

@@ -76,9 +76,6 @@ public:
 
     void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
 
-    void SetNegotiatedAudioFormat(bool b);
-    void StartNegotiateAudioFormat();
-
     void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1(), public_address, public_port);}
     void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message, public_address, public_port);}
 
@@ -92,9 +89,6 @@ public:
 Q_SIGNALS:
     void Disconnected();
     void HandshakeAckReceived();
-
-public Q_SLOTS:
-    void SendNegotiateAudioFormat();
 
 private:
     QUuid node_id;
@@ -122,8 +116,6 @@ private:
     uint32_t last_sequence_number;
     uint32_t last_receive_sequence_number;
 
-    bool started_negotiating_audio_format;
-    bool negotiated_audio_format;
     int num_requests;
 
     std::unique_ptr<Packet> ack_packet;

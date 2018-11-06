@@ -756,26 +756,6 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
 
         SendMessageToNode(NodeType::DomainServer, datagram);
     }
-    else if (response_packet->GetType() == PacketType::SelectedAudioFormat) {
-        qDebug() << "Node::RelayToClient() - Negotiated audio format" << response_packet->ReadString();
-
-        if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
-            audio_mixer->SetNegotiatedAudioFormat(true);
-            SendMessageToNode(audio_mixer->GetNodeType(), datagram);
-        }
-    }
-    else if (response_packet->GetType() == PacketType::PingReply) {
-        Node * node = GetNodeFromAddress(sender, sender_port);
-
-        if (node){
-            SendMessageToNode(node->GetNodeType(), datagram);
-
-            //qDebug() << "Node::RelayToClient() - Ping reply from: " << sender << sender_port;
-            if (audio_mixer->CheckNodeAddress(sender, sender_port)) {
-                audio_mixer->StartNegotiateAudioFormat();
-            }
-        }
-    }
     else {
         // Send any other types of packets to the client
         Node * node = GetNodeFromAddress(sender, sender_port);

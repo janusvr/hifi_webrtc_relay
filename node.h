@@ -62,8 +62,6 @@ public:
 
     NodeType_t GetNodeType() {return node_type;}
 
-    void SetSequenceNumber(uint32_t s) { if (s > sequence_number) sequence_number = s;}
-
     void SetNodeID(QUuid n);
     void SetNodeType(NodeType_t n);
     void SetPublicAddress(QHostAddress a, quint16 p);
@@ -80,11 +78,6 @@ public:
     void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message, public_address, public_port);}
 
     bool CheckNodeAddress(QHostAddress a, quint16 p);
-
-    void HandleControlPacket(Packet * control_packet);
-    void SendHandshake();
-    void SendHandshakeRequest();
-    bool GetHasReceivedHandshakeAck() {return has_received_handshake_ack;}
 
 Q_SIGNALS:
     void Disconnected();
@@ -110,20 +103,7 @@ private:
 
     QTimer * hifi_response_timer;
 
-    uint32_t sequence_number;
-    uint32_t initial_sequence_number;
-    uint32_t initial_receive_sequence_number;
-    uint32_t last_sequence_number;
-    uint32_t last_receive_sequence_number;
-
     int num_requests;
-
-    std::unique_ptr<Packet> ack_packet;
-    std::unique_ptr<Packet>  handshake_ack;
-    uint32_t last_ack_received;
-    bool has_received_handshake;
-    bool has_received_handshake_ack;
-    bool did_request_handshake;
 };
 
 #endif // NODE_H

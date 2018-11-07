@@ -16,27 +16,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     pinged = false;
     pingreplied = false;
 
-    has_received_handshake_ack = false;
-    did_request_handshake = false;
-
-    static std::random_device rd;
-    static std::mt19937 generator(rd());
-    static std::uniform_int_distribution<> distribution(0, 0x07FFFFFF);
-    sequence_number = distribution(generator);
-    initial_sequence_number = sequence_number;
-    initial_receive_sequence_number = 0;
-    last_sequence_number = 0;
-    last_receive_sequence_number = 0;
-
-    static const int ACK_PACKET_PAYLOAD_BYTES = sizeof(uint32_t);
-    static const int HANDSHAKE_ACK_PAYLOAD_BYTES = sizeof(uint32_t);
-    ack_packet = Packet::CreateControl(sequence_number, ControlType::ACK, ACK_PACKET_PAYLOAD_BYTES);
-    //QByteArray b(ack_packet->GetData(), ack_packet->GetDataSize());
-    //qDebug() << "ack_packet" << b;
-    handshake_ack = Packet::CreateControl(sequence_number, ControlType::HandshakeACK, HANDSHAKE_ACK_PAYLOAD_BYTES);
-    //QByteArray a(handshake_ack->GetData(), handshake_ack->GetDataSize());
-    //qDebug() << "handshake_ack" << a;
-
     qDebug() << "HifiConnection::HifiConnection() - Synchronously looking up IP address for hostname" << stun_server_hostname;
     QHostInfo result_stun = QHostInfo::fromName(stun_server_hostname);
     HandleLookupResult(result_stun, "stun");
@@ -58,8 +37,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     connect(this, SIGNAL(StunFinished()), this, SLOT(StartIce()));
     connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainIcePing()));
     connect(this, SIGNAL(DomainIcePingFinished()), this, SLOT(StartDomainConnect()));
-
-    connect(this, SIGNAL(DomainServerHasReceivedHandshakeAck()), this, SLOT(ParsePendingDatagrams()));
 
     ice_client_id = QUuid::createUuid();
 
@@ -512,92 +489,6 @@ void HifiConnection::ParseHifiResponse()
             continue;
         }
 
-        // Check for control packet
-        bool is_control_packet = *reinterpret_cast<uint32_t*>(datagram.data()) & CONTROL_BIT_MASK;
-        if (is_control_packet) {
-            //qDebug() << "RECEIVED CONTROL PACKET";
-            // setup a control packet from the data we just read
-            std::unique_ptr<Packet> control_packet = Packet::FromReceivedControlPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
-
-            Node * node = GetNodeFromAddress(sender, sender_port);
-            if (node) {
-                node->HandleControlPacket(control_packet.get());
-                SendMessageToNode(node->GetNodeType(), datagram);
-            }
-            else {
-                //qDebug() << "RECEIVED CONTROL DOMAIN PACKET";
-                switch (control_packet->GetControlType()) {
-                    case ControlType::ACK: {
-                    //qDebug() << "RECEIVED CONTROL ACK";
-                        if (has_received_handshake_ack) {
-                            // read the ACKed sequence number
-                            uint32_t ack;
-                            control_packet->read(reinterpret_cast<char*>(&ack), sizeof(uint32_t));
-
-                            if (ack <= last_ack_received) {
-                                // this is an out of order ACK, bail
-                                // or
-                                // processing an already received ACK, bail
-                                continue;
-                            }
-
-                            last_ack_received = ack;
-                        }
-                        break;
-                    }
-                    case ControlType::Handshake: {
-                    //qDebug() << "RECEIVED CONTROL HANDSHAKE";
-                        uint32_t seq;
-                        control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
-
-                        if (!has_received_handshake || seq != initial_receive_sequence_number) {
-                            // server sent us a handshake - we need to assume this means state should be reset
-                            // as long as we haven't received a handshake yet or we have and we've received some data
-                            initial_receive_sequence_number = seq;
-                            last_receive_sequence_number = seq - 1;
-                        }
-
-                        handshake_ack->reset();
-                        handshake_ack->write(reinterpret_cast<const char*>(&seq), sizeof(uint32_t));
-                        hifi_socket->writeDatagram(handshake_ack->GetData(), handshake_ack->GetDataSize(), domain_public_address, domain_public_port);
-
-                        // indicate that handshake has been received
-                        has_received_handshake = true;
-
-                        if (did_request_handshake) {
-                            did_request_handshake = false;
-                        }
-                        break;
-                    }
-                    case ControlType::HandshakeACK: {
-                    //qDebug() << "RECEIVED CONTROL HANDSHAKE ACK";
-                        // if we've decided to clean up the send queue then this handshake ACK should be ignored, it's useless
-                        uint32_t seq;
-                        control_packet->read(reinterpret_cast<char*>(&seq), sizeof(uint32_t));
-
-                        //qDebug() << "handshake ack" << seq << initial_sequence_number;
-                        if (seq == initial_sequence_number) {
-                            // indicate that handshake ACK was received
-                            has_received_handshake_ack = true;
-                            Q_EMIT DomainServerHasReceivedHandshakeAck();
-                        }
-                        break;
-                    }
-                    case ControlType::HandshakeRequest: {
-                    //qDebug() << "RECEIVED HANDSHAKE REQUEST";
-                        if (has_received_handshake_ack) {
-                            // We're already in a state where we've received a handshake ack, so we are likely in a state
-                            // where the other end expired our connection. Let's reset.
-                            has_received_handshake_ack = false;
-                        }
-                        break;
-                    }
-                }
-                SendMessageToNode(NodeType::DomainServer, datagram);
-            }
-            continue;
-        }
-
         std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);// check if this was a control packet or a data packet
         //qDebug() << "HifiConnection::ParseHifiResponse() - Packet type" << (int) response_packet->GetType();
 
@@ -626,43 +517,7 @@ void HifiConnection::ParseHifiResponse()
             continue;
         }
 
-        //Domain Server or Node response (add to queue if packet is reliable and we haven't received a handshake)
-        if (response_packet->GetIsReliable()) {
-            //qDebug() << "is reliable";
-            if (sender.toIPv4Address() == domain_public_address.toIPv4Address() && sender_port == domain_public_port && !has_received_handshake_ack) {
-                //qDebug() << "sending domain handshake";
-                SendHandshakeRequest();
-                pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
-
-                //Send packet regardless
-                SendMessageToNode(NodeType::DomainServer, datagram);
-                continue;
-            }
-            else {
-                //qDebug() << "sending node handshake";
-                Node * node = GetNodeFromAddress(sender, sender_port);
-                if (node && !node->GetHasReceivedHandshakeAck()) {
-                    node->SendHandshakeRequest();
-                    pending_datagrams.push_back(new PendingDatagram(datagram, sender, sender_port));
-
-                    //Send packet regardless
-                    SendMessageToNode(node->GetNodeType(), datagram);
-                    continue;
-                }
-            }
-        }
         ParseDatagram(datagram, sender, sender_port);
-    }
-}
-
-void HifiConnection::ParsePendingDatagrams()
-{
-    while (!pending_datagrams.isEmpty())
-    {
-        PendingDatagram * p = pending_datagrams.front();
-        pending_datagrams.pop_front();
-        ParseDatagram(p->GetDatagram(), p->GetSender(), p->GetSenderPort());
-        delete p;
     }
 }
 
@@ -815,42 +670,36 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering asset server" << node_public_address << node_public_port;
             asset_server = node;
             connect(asset_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(asset_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         case NodeType::AudioMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering audio mixer" << node_public_address << node_public_port;
             audio_mixer = node;
             connect(audio_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(audio_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         case NodeType::AvatarMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering avatar mixer" << node_public_address << node_public_port;
             avatar_mixer = node;
             connect(avatar_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(avatar_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         case NodeType::MessagesMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering messages mixer" << node_public_address << node_public_port;
             messages_mixer = node;
             connect(messages_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(messages_mixer, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         case NodeType::EntityServer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering entity server" << node_public_address << node_public_port;
             entity_server = node;
             connect(entity_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(entity_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         case NodeType::EntityScriptServer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering entity script server" << node_public_address << node_public_port;
             entity_script_server = node;
             connect(entity_script_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
-            connect(asset_server, SIGNAL(HandshakeAckReceived()), this, SLOT(ParsePendingDatagrams()));
             break;
         }
         default: {
@@ -959,16 +808,8 @@ void HifiConnection::SendDomainIcePing()
     SendIcePing((quint8) 2);
 
     if (domain_connected) {
-        if (!has_received_handshake_ack) SendHandshake();
         SendDomainListRequest();
     }
-
-    if (messages_mixer && !messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
-    if (avatar_mixer && !avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
-    if (audio_mixer && !audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
-    if (entity_script_server && !entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
-    if (entity_server && !entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
-    if (asset_server && !asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
 }
 
 void HifiConnection::SendDomainConnectRequest()
@@ -1000,7 +841,7 @@ void HifiConnection::SendDomainConnectRequest()
 
     PacketType packet_type = PacketType::DomainConnectRequest;
     //PacketVersion version = versionForPacketType(packetType);
-    std::unique_ptr<Packet> domain_connect_request_packet = Packet::Create(sequence_number,packet_type);
+    std::unique_ptr<Packet> domain_connect_request_packet = Packet::Create(0,packet_type);
     QDataStream domain_connect_data_stream(domain_connect_request_packet.get());
     domain_connect_data_stream << ice_client_id;
 
@@ -1013,7 +854,6 @@ void HifiConnection::SendDomainConnectRequest()
                             << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
-    sequence_number++;
 }
 
 void HifiConnection::SendDomainListRequest()
@@ -1022,7 +862,7 @@ void HifiConnection::SendDomainListRequest()
         return;
     }
 
-    std::unique_ptr<Packet> domainListRequestPacket = Packet::Create(sequence_number,PacketType::DomainListRequest);
+    std::unique_ptr<Packet> domainListRequestPacket = Packet::Create(0,PacketType::DomainListRequest);
     QDataStream domainListDataStream(domainListRequestPacket.get());
     //qDebug() << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domainListDataStream << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
@@ -1034,7 +874,7 @@ void HifiConnection::SendIcePing(quint8 ping_type)
 {
     int packet_size = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
 
-    auto ice_ping_packet = Packet::Create(sequence_number, PacketType::ICEPing, packet_size);
+    auto ice_ping_packet = Packet::Create(0, PacketType::ICEPing, packet_size);
     ice_ping_packet->write(ice_client_id.toRfc4122());
     ice_ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
 
@@ -1042,7 +882,6 @@ void HifiConnection::SendIcePing(quint8 ping_type)
     //qDebug() << "ping packet" << b;
 
     hifi_socket->writeDatagram(ice_ping_packet->GetData(), ice_ping_packet->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
-    sequence_number++;
 }
 
 void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port)
@@ -1053,7 +892,7 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, qu
     memcpy(&ping_type, message + NUM_BYTES_RFC4122_UUID, sizeof(quint8));
 
     int packet_size = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
-    std::unique_ptr<Packet> ice_ping_reply = Packet::Create(sequence_number, PacketType::ICEPingReply, packet_size);
+    std::unique_ptr<Packet> ice_ping_reply = Packet::Create(0, PacketType::ICEPingReply, packet_size);
 
     // pack the ICE ID and then the ping type
     ice_ping_reply->write(ice_client_id.toRfc4122());
@@ -1064,26 +903,6 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, qu
 
     //qDebug() << packet_size << ice_ping_reply->GetDataSize();
     hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), sender, sender_port);
-    sequence_number++;
-}
-
-void HifiConnection::SendHandshake()
-{
-    auto handshake_packet = Packet::CreateControl(initial_sequence_number, ControlType::Handshake, sizeof(initial_sequence_number));
-    handshake_packet->write(reinterpret_cast<const char*>(&initial_sequence_number), sizeof(initial_sequence_number));
-    hifi_socket->writeDatagram(handshake_packet->GetData(), handshake_packet->GetDataSize(), domain_public_address, domain_public_port);
-    //QByteArray b(handshake_packet->GetData(), handshake_packet->GetDataSize());
-    //qDebug() << "handshake" << b;
-}
-
-void HifiConnection::SendHandshakeRequest()
-{
-    auto handshake_request_packet = Packet::CreateControl(sequence_number, ControlType::HandshakeRequest, 0);
-    hifi_socket->writeDatagram(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize(), domain_public_address, domain_public_port);
-    //QByteArray b(handshake_request_packet->GetData(), handshake_request_packet->GetDataSize());
-    //bool is_control_packet = *reinterpret_cast<uint32_t*>(handshake_request_packet->GetData()) & CONTROL_BIT_MASK;
-    //qDebug() << "handshake" << b << is_control_packet;
-    did_request_handshake = true;
 }
 
 void HifiConnection::ClientMessageReceived(const QString &message)

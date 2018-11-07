@@ -117,6 +117,10 @@ public:
         EntityQueryInitialResultsComplete,
         BulkAvatarTraits,
 
+        ProxiedICEPing,
+        ProxiedICEPingReply,
+        ProxiedDomainListRequest,
+
         NUM_PACKET_TYPE
     };
 
@@ -131,6 +135,14 @@ public:
             { PacketTypeEnum::Value::BulkAvatarData, PacketTypeEnum::Value::ReplicatedBulkAvatarData }
         };
         return REPLICATED_PACKET_MAPPING;
+    }
+
+    const static QSet<PacketTypeEnum::Value> GetProxiedPackets() {
+        const static QSet<PacketTypeEnum::Value> PROXIED_PACKETS = QSet<PacketTypeEnum::Value>()
+            << PacketTypeEnum::Value::ProxiedICEPing
+            << PacketTypeEnum::Value::ProxiedICEPingReply
+            << PacketTypeEnum::Value::ProxiedDomainListRequest;
+        return PROXIED_PACKETS;
     }
 
     const static QSet<PacketTypeEnum::Value> GetNonVerifiedPackets() {
@@ -402,7 +414,7 @@ public:
         WriteControlType();
         //write(reinterpret_cast<const char*>(&sequence_number), sizeof(uint32_t));
     }
-    Packet(char * data, qint64 size, QHostAddress addr, quint16 port);
+    Packet(char * data, qint64 size);
 
     static int HeaderSize(bool is_part_of_message);
     static int LocalHeaderSize(PacketType type);
@@ -412,17 +424,17 @@ public:
     int TotalHeaderSize();
 
     static std::unique_ptr<Packet> Create(uint32_t sequence, PacketType t, qint64 size = -1);
-    static std::unique_ptr<Packet> FromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port);
+    static std::unique_ptr<Packet> FromReceivedPacket(char * data, qint64 size);
 
     static std::unique_ptr<Packet> CreateControl(uint32_t sequence, ControlType t, qint64 size = -1)
     {
         //return std::unique_ptr<Packet>(new Packet(sequence, t, HeaderSize(false) + Packet::LocalControlHeaderSize() + size));
         return std::unique_ptr<Packet>(new Packet(sequence, t, Packet::LocalControlHeaderSize() + size));
     }
-    static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
+    static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size)
     {
         // allocate memory
-        auto packet = std::unique_ptr<Packet>(new Packet(data, Packet::LocalControlHeaderSize() + size, addr, port));
+        auto packet = std::unique_ptr<Packet>(new Packet(data, Packet::LocalControlHeaderSize() + size));
 
         packet->open(QIODevice::ReadOnly);
 

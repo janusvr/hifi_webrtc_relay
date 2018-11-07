@@ -13,9 +13,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     stun_server_port = 3478;
     ice_server_hostname = "ice.highfidelity.com"; //"dev-ice.highfidelity.com";
 
-    pinged = false;
-    pingreplied = false;
-
     has_received_handshake_ack = false;
     did_request_handshake = false;
 
@@ -56,8 +53,7 @@ HifiConnection::HifiConnection(QWebSocket * s)
     connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(HifiConnect()));
     connect(this, SIGNAL(StartHifiConnection()), this, SLOT(StartStun()));
     connect(this, SIGNAL(StunFinished()), this, SLOT(StartIce()));
-    connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainIcePing()));
-    connect(this, SIGNAL(DomainIcePingFinished()), this, SLOT(StartDomainConnect()));
+    connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainConnect()));
 
     connect(this, SIGNAL(DomainServerHasReceivedHandshakeAck()), this, SLOT(ParsePendingDatagrams()));
 
@@ -77,10 +73,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     entity_server = nullptr;
     entity_script_server = nullptr;
     data_channel = nullptr;
-
-    hifi_ping_timer = new QTimer { this };
-    connect(hifi_ping_timer, &QTimer::timeout, this, &HifiConnection::SendDomainIcePing);
-    hifi_ping_timer->setInterval(HIFI_PING_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     stun_response_timer = new QTimer { this };
     connect(stun_response_timer, &QTimer::timeout, this, &HifiConnection::SendStunRequest);
@@ -232,12 +224,6 @@ void HifiConnection::Stop()
     if (entity_script_server) delete entity_script_server;
     if (entity_server) delete entity_server;
 
-    if (hifi_ping_timer)
-    {
-        delete hifi_ping_timer;
-        hifi_ping_timer = NULL;
-    }
-
     if (ice_response_timer)
     {
         delete ice_response_timer;
@@ -346,7 +332,37 @@ void HifiConnection::HifiConnect()
 
         if (server == NodeType::DomainServer) {
             //qDebug() << "domain";
-            this->SendDomainServerMessage(packet);
+            std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(packet.data(), (qint64) packet.size());// check if this was a control packet or a data packet
+            if (response_packet->GetType() == PacketType::ProxiedICEPing) {
+                uint8_t ping_type = 2; //Default to public
+                response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
+                //qDebug() << "proxiediceping" << ping_type;
+                SendIcePing(response_packet->GetSequenceNumber(), ping_type);
+            }
+            else if (response_packet->GetType() == PacketType::ProxiedICEPingReply) {
+                uint8_t ping_type = 2; //Default to public
+                response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
+                //qDebug() << "proxiedicepingreply" << ping_type;
+                SendIcePingReply(response_packet->GetSequenceNumber(), ping_type);
+            }
+            else if (response_packet->GetType() == PacketType::ProxiedDomainListRequest) {
+                //qDebug() << "proxieddomainlistrequest";
+                SendDomainListRequest(response_packet->GetSequenceNumber());
+
+                if (domain_connected) {
+                    if (!has_received_handshake_ack) SendHandshake();
+                }
+
+                if (messages_mixer && !messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
+                if (avatar_mixer && !avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
+                if (audio_mixer && !audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
+                if (entity_script_server && !entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
+                if (entity_server && !entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
+                if (asset_server && !asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
+            }
+            else {
+                this->SendDomainServerMessage(packet);
+            }
         }
         else if (server == NodeType::AssetServer) {
             //qDebug() << "asset";
@@ -404,11 +420,6 @@ void HifiConnection::StartIce()
     has_completed_current_request = false;
 
     ice_response_timer->start();
-}
-
-void HifiConnection::StartDomainIcePing()
-{
-    hifi_ping_timer->start();
 }
 
 void HifiConnection::StartDomainConnect()
@@ -517,7 +528,7 @@ void HifiConnection::ParseHifiResponse()
         if (is_control_packet) {
             //qDebug() << "RECEIVED CONTROL PACKET";
             // setup a control packet from the data we just read
-            std::unique_ptr<Packet> control_packet = Packet::FromReceivedControlPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);
+            std::unique_ptr<Packet> control_packet = Packet::FromReceivedControlPacket(datagram.data(), (qint64) datagram.size());
 
             Node * node = GetNodeFromAddress(sender, sender_port);
             if (node) {
@@ -598,7 +609,7 @@ void HifiConnection::ParseHifiResponse()
             continue;
         }
 
-        std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);// check if this was a control packet or a data packet
+        std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size());// check if this was a control packet or a data packet
         //qDebug() << "HifiConnection::ParseHifiResponse() - Packet type" << (int) response_packet->GetType();
 
         //ICE response
@@ -668,31 +679,8 @@ void HifiConnection::ParsePendingDatagrams()
 
 void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, quint16 sender_port)
 {
-    std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size(), sender, sender_port);// check if this was a control packet or a data packet
-    if (response_packet->GetType() == PacketType::ICEPing) {
-        //qDebug() << "HifiConnection::ParseHifiResponse() - Send ping reply";
-        SendIcePingReply(response_packet.get(), sender, sender_port);
-        SendMessageToNode(NodeType::DomainServer, datagram);
-
-        pingreplied = true;
-        if (pingreplied && pinged && !started_domain_connect)
-        {
-            started_domain_connect = true;
-            Q_EMIT DomainIcePingFinished();
-        }
-    }
-    else if (response_packet->GetType() == PacketType::ICEPingReply) {
-        //qDebug() << "HifiConnection::ParseHifiResponse() - Process ping reply";
-        SendMessageToNode(NodeType::DomainServer, datagram);
-
-        pinged = true;
-        if (pingreplied && pinged && !started_domain_connect)
-        {
-            started_domain_connect = true;
-            Q_EMIT DomainIcePingFinished();
-        }
-    }
-    else if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
+    std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size());// check if this was a control packet or a data packet
+    if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
         qDebug() << "HifiConnection::ParseHifiResponse() - Process domain list";
         QDataStream packet_stream(response_packet->readAll());
 
@@ -948,29 +936,6 @@ void HifiConnection::SendIceRequest()
     hifi_socket->writeDatagram(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), ice_server_address, ice_server_port);
 }
 
-void HifiConnection::SendDomainIcePing()
-{
-    if (!finished_domain_id_request) {
-        return;
-    }
-
-    // send the ping packet to the local and public sockets for this node
-    //SendIcePing((quint8) 1);
-    SendIcePing((quint8) 2);
-
-    if (domain_connected) {
-        if (!has_received_handshake_ack) SendHandshake();
-        SendDomainListRequest();
-    }
-
-    if (messages_mixer && !messages_mixer->GetHasReceivedHandshakeAck()) messages_mixer->SendHandshake();
-    if (avatar_mixer && !avatar_mixer->GetHasReceivedHandshakeAck()) avatar_mixer->SendHandshake();
-    if (audio_mixer && !audio_mixer->GetHasReceivedHandshakeAck()) audio_mixer->SendHandshake();
-    if (entity_script_server && !entity_script_server->GetHasReceivedHandshakeAck()) entity_script_server->SendHandshake();
-    if (entity_server && !entity_server->GetHasReceivedHandshakeAck()) entity_server->SendHandshake();
-    if (asset_server && !asset_server->GetHasReceivedHandshakeAck()) asset_server->SendHandshake();
-}
-
 void HifiConnection::SendDomainConnectRequest()
 {
     if (!finished_domain_id_request) {
@@ -1000,7 +965,7 @@ void HifiConnection::SendDomainConnectRequest()
 
     PacketType packet_type = PacketType::DomainConnectRequest;
     //PacketVersion version = versionForPacketType(packetType);
-    std::unique_ptr<Packet> domain_connect_request_packet = Packet::Create(sequence_number,packet_type);
+    std::unique_ptr<Packet> domain_connect_request_packet = Packet::Create(0,packet_type);
     QDataStream domain_connect_data_stream(domain_connect_request_packet.get());
     domain_connect_data_stream << ice_client_id;
 
@@ -1012,29 +977,29 @@ void HifiConnection::SendDomainConnectRequest()
     domain_connect_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint()
                             << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
 
+
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
-    sequence_number++;
 }
 
-void HifiConnection::SendDomainListRequest()
+void HifiConnection::SendDomainListRequest(uint32_t s)
 {
     if (!finished_domain_id_request) {
         return;
     }
 
-    std::unique_ptr<Packet> domainListRequestPacket = Packet::Create(sequence_number,PacketType::DomainListRequest);
+    std::unique_ptr<Packet> domainListRequestPacket = Packet::Create(s,PacketType::DomainListRequest);
     QDataStream domainListDataStream(domainListRequestPacket.get());
-    //qDebug() << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
+    //qDebug() << "list request" << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domainListDataStream << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
     domainListRequestPacket->WriteSourceID(local_id);
     hifi_socket->writeDatagram(domainListRequestPacket->GetData(), domainListRequestPacket->GetDataSize(), domain_public_address, domain_public_port);
 }
 
-void HifiConnection::SendIcePing(quint8 ping_type)
+void HifiConnection::SendIcePing(uint32_t s, quint8 ping_type)
 {
     int packet_size = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
 
-    auto ice_ping_packet = Packet::Create(sequence_number, PacketType::ICEPing, packet_size);
+    auto ice_ping_packet = Packet::Create(s, PacketType::ICEPing, packet_size);
     ice_ping_packet->write(ice_client_id.toRfc4122());
     ice_ping_packet->write(reinterpret_cast<const char*>(&ping_type), sizeof(ping_type));
 
@@ -1042,18 +1007,12 @@ void HifiConnection::SendIcePing(quint8 ping_type)
     //qDebug() << "ping packet" << b;
 
     hifi_socket->writeDatagram(ice_ping_packet->GetData(), ice_ping_packet->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
-    sequence_number++;
 }
 
-void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port)
+void HifiConnection::SendIcePingReply(uint32_t s, quint8 ping_type)
 {
-    quint8 ping_type;
-
-    const char * message = ice_ping->readAll().constData();
-    memcpy(&ping_type, message + NUM_BYTES_RFC4122_UUID, sizeof(quint8));
-
     int packet_size = NUM_BYTES_RFC4122_UUID + sizeof(quint8);
-    std::unique_ptr<Packet> ice_ping_reply = Packet::Create(sequence_number, PacketType::ICEPingReply, packet_size);
+    std::unique_ptr<Packet> ice_ping_reply = Packet::Create(s, PacketType::ICEPingReply, packet_size);
 
     // pack the ICE ID and then the ping type
     ice_ping_reply->write(ice_client_id.toRfc4122());
@@ -1063,8 +1022,7 @@ void HifiConnection::SendIcePingReply(Packet * ice_ping, QHostAddress sender, qu
     //qDebug() << "ping reply packet" << b;
 
     //qDebug() << packet_size << ice_ping_reply->GetDataSize();
-    hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), sender, sender_port);
-    sequence_number++;
+    hifi_socket->writeDatagram(ice_ping_reply->GetData(), ice_ping_reply->GetDataSize(), (ping_type == 1)?domain_local_address:domain_public_address, (ping_type == 1)?domain_local_port:domain_public_port);
 }
 
 void HifiConnection::SendHandshake()
@@ -1187,17 +1145,17 @@ void HifiConnection::NodeDisconnected()
 Node * HifiConnection::GetNodeFromAddress(QHostAddress sender, quint16 sender_port)
 {
     Node * node = nullptr;
-    if (audio_mixer->CheckNodeAddress(sender, sender_port))
+    if (audio_mixer && audio_mixer->CheckNodeAddress(sender, sender_port))
         node = audio_mixer;
-    else if (avatar_mixer->CheckNodeAddress(sender, sender_port))
+    else if (avatar_mixer && avatar_mixer->CheckNodeAddress(sender, sender_port))
         node = avatar_mixer;
-    else if (asset_server->CheckNodeAddress(sender, sender_port))
+    else if (asset_server && asset_server->CheckNodeAddress(sender, sender_port))
         node = asset_server;
-    else if (messages_mixer->CheckNodeAddress(sender, sender_port))
+    else if (messages_mixer && messages_mixer->CheckNodeAddress(sender, sender_port))
         node = messages_mixer;
-    else if (entity_script_server->CheckNodeAddress(sender, sender_port))
+    else if (entity_script_server && entity_script_server->CheckNodeAddress(sender, sender_port))
         node = entity_script_server;
-    else if (entity_server->CheckNodeAddress(sender, sender_port))
+    else if (entity_server && entity_server->CheckNodeAddress(sender, sender_port))
         node = entity_server;
 
     return node;

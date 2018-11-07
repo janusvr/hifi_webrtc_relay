@@ -119,7 +119,7 @@ Packet::Packet(uint32_t sequence, PacketType t, qint64 size, bool reliable, bool
     AdjustPayloadStartAndCapacity(Packet::HeaderSize(false) + Packet::LocalHeaderSize(type));
 }
 
-Packet::Packet(char * data, qint64 size, QHostAddress addr, quint16 port)
+Packet::Packet(char * data, qint64 size)
 {
     packet_size = size;
 
@@ -202,10 +202,10 @@ std::unique_ptr<Packet> Packet::Create(uint32_t sequence, PacketType t, qint64 s
     return packet;
 }
 
-std::unique_ptr<Packet> Packet::FromReceivedPacket(char * data, qint64 size, QHostAddress addr, quint16 port)
+std::unique_ptr<Packet> Packet::FromReceivedPacket(char * data, qint64 size)
 {
     // allocate memory
-    auto packet = std::unique_ptr<Packet>(new Packet(data, size, addr, port));
+    auto packet = std::unique_ptr<Packet>(new Packet(data, size));
 
     packet->open(QIODevice::ReadOnly);
 

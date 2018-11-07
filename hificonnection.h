@@ -69,8 +69,8 @@ public:
 
     void Stop();
 
-    void SendIcePing(quint8 ping_type);
-    void SendIcePingReply(Packet * ice_ping, QHostAddress sender, quint16 sender_port);
+    void SendIcePing(uint32_t s, quint8 ping_type);
+    void SendIcePingReply(uint32_t s, quint8 ping_type);
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
@@ -90,7 +90,7 @@ public:
 
     void SendHandshakeRequest();
     void SendHandshake();
-    void SendDomainListRequest();
+    void SendDomainListRequest(uint32_t s);
 
     void SendMessageToNode(NodeType_t node_type, QByteArray data) {
         data.push_front((char) node_type);
@@ -107,7 +107,6 @@ Q_SIGNALS:
     void StartHifiConnection();
     void StunFinished();
     void IceFinished();
-    void DomainIcePingFinished();
 
     void DomainServerHasReceivedHandshakeAck();
 
@@ -122,12 +121,10 @@ public Q_SLOTS:
 
     void StartIce();
     void StartStun();
-    void StartDomainIcePing();
     void StartDomainConnect();
 
     void SendStunRequest();
     void SendIceRequest();
-    void SendDomainIcePing();
     void SendDomainConnectRequest();
     void ParseHifiResponse();
     void ParsePendingDatagrams();
@@ -150,7 +147,6 @@ private:
     bool has_tcp_checked_local_socket;
 
     QSharedPointer<QUdpSocket> hifi_socket;
-    QTimer * hifi_ping_timer;
     QTimer * stun_response_timer;
     QTimer * ice_response_timer;
     QTimer * hifi_response_timer;
@@ -205,9 +201,6 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
-
-    bool pinged;
-    bool pingreplied;
 
     uint32_t sequence_number;
     uint32_t initial_sequence_number;

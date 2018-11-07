@@ -82,11 +82,13 @@ void Utils::SetupProtocolVersionSignature()
 {
     QByteArray buffer;
     QDataStream stream(&buffer, QIODevice::WriteOnly);
-    uint8_t number_of_protocols = static_cast<uint8_t>(PacketType::NUM_PACKET_TYPE);
+    uint8_t number_of_protocols = static_cast<uint8_t>(PacketType::NUM_PACKET_TYPE) - PacketTypeEnum::GetProxiedPackets().size();
     stream << number_of_protocols;
-    for (uint8_t packet_type = 0; packet_type < number_of_protocols; packet_type++) {
-        uint8_t packet_type_version = static_cast<uint8_t>(VersionForPacketType(static_cast<PacketType>(packet_type)));
-        stream << packet_type_version;
+    for (uint8_t packet_type = 0; packet_type < static_cast<uint8_t>(PacketType::NUM_PACKET_TYPE); packet_type++) {
+        if (!PacketTypeEnum::GetProxiedPackets().contains(static_cast<PacketType>(packet_type))) {
+            uint8_t packet_type_version = static_cast<uint8_t>(VersionForPacketType(static_cast<PacketType>(packet_type)));
+            stream << packet_type_version;
+        }
     }
     QCryptographicHash hash(QCryptographicHash::Md5);
     hash.addData(buffer);

@@ -31,29 +31,6 @@
 
 #include <rtcdcpp/PeerConnection.hpp>
 
-class PendingDatagram: public QObject
-{
-    Q_OBJECT
-
-public:
-    PendingDatagram(QByteArray b, QHostAddress a, quint16 p)
-    {
-        data = b;
-        sender = a;
-        sender_port = p;
-    }
-    ~PendingDatagram() {}
-
-    QByteArray GetDatagram() {return data;}
-    QHostAddress GetSender() {return sender;}
-    quint16 GetSenderPort() {return sender_port;}
-
-private:
-    QByteArray data;
-    QHostAddress sender;
-    quint16 sender_port;
-};
-
 class HifiConnection : public QObject
 {
     Q_OBJECT
@@ -88,8 +65,6 @@ public:
 
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
-    void SendHandshakeRequest();
-    void SendHandshake();
     void SendDomainListRequest(uint32_t s);
 
     void SendMessageToNode(NodeType_t node_type, QByteArray data) {
@@ -108,8 +83,6 @@ Q_SIGNALS:
     void StunFinished();
     void IceFinished();
 
-    void DomainServerHasReceivedHandshakeAck();
-
 public Q_SLOTS:
 
     void ConnectedForLocalSocketTest();
@@ -127,7 +100,6 @@ public Q_SLOTS:
     void SendIceRequest();
     void SendDomainConnectRequest();
     void ParseHifiResponse();
-    void ParsePendingDatagrams();
 
     void ClientMessageReceived(const QString &message);
     void ClientDisconnected();
@@ -201,21 +173,6 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
-
-    uint32_t sequence_number;
-    uint32_t initial_sequence_number;
-    uint32_t initial_receive_sequence_number;
-    uint32_t last_sequence_number;
-    uint32_t last_receive_sequence_number;
-
-    std::unique_ptr<Packet> ack_packet;
-    std::unique_ptr<Packet>  handshake_ack;
-    uint32_t last_ack_received;
-    bool has_received_handshake;
-    bool has_received_handshake_ack;
-    bool did_request_handshake;
-
-    QList <PendingDatagram *> pending_datagrams;
 };
 
 #endif // HIFICONNECTION_H

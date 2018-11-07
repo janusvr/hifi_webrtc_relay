@@ -492,6 +492,19 @@ void HifiConnection::ParseHifiResponse()
         std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size());// check if this was a control packet or a data packet
         //qDebug() << "HifiConnection::ParseHifiResponse() - Packet type" << (int) response_packet->GetType();
 
+        bool is_control_packet = *reinterpret_cast<uint32_t*>(datagram.data()) & CONTROL_BIT_MASK;
+        if (is_control_packet) {
+            Node * node = GetNodeFromAddress(sender, sender_port);
+
+            if (node) {
+                SendMessageToNode(node->GetNodeType(), datagram);
+            }
+            else {
+                SendMessageToNode(NodeType::DomainServer, datagram);
+            }
+            continue;
+        }
+
         //ICE response
         if (response_packet->GetType() == PacketType::ICEServerPeerInformation)
         {

@@ -309,25 +309,31 @@ void HifiConnection::HifiConnect()
 
         if (server == NodeType::DomainServer) {
             //qDebug() << "domain";
-            std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(packet.data(), (qint64) packet.size());// check if this was a control packet or a data packet
-            if (response_packet->GetType() == PacketType::ProxiedICEPing) {
-                uint8_t ping_type = 2; //Default to public
-                response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
-                //qDebug() << "proxiediceping" << ping_type;
-                SendIcePing(response_packet->GetSequenceNumber(), ping_type);
-            }
-            else if (response_packet->GetType() == PacketType::ProxiedICEPingReply) {
-                uint8_t ping_type = 2; //Default to public
-                response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
-                //qDebug() << "proxiedicepingreply" << ping_type;
-                SendIcePingReply(response_packet->GetSequenceNumber(), ping_type);
-            }
-            else if (response_packet->GetType() == PacketType::ProxiedDomainListRequest) {
-                //qDebug() << "proxieddomainlistrequest";
-                SendDomainListRequest(response_packet->GetSequenceNumber());
+            bool is_control_packet = *reinterpret_cast<uint32_t*>(packet.data()) & CONTROL_BIT_MASK;
+            if (is_control_packet) {
+                this->SendDomainServerMessage(packet);
             }
             else {
-                this->SendDomainServerMessage(packet);
+                std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(packet.data(), (qint64) packet.size());// check if this was a control packet or a data packet
+                if (response_packet->GetType() == PacketType::ProxiedICEPing) {
+                    uint8_t ping_type = 2; //Default to public
+                    response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
+                    //qDebug() << "proxiediceping" << ping_type;
+                    SendIcePing(response_packet->GetSequenceNumber(), ping_type);
+                }
+                else if (response_packet->GetType() == PacketType::ProxiedICEPingReply) {
+                    uint8_t ping_type = 2; //Default to public
+                    response_packet->read(reinterpret_cast<char*>(&ping_type), sizeof(uint8_t));
+                    //qDebug() << "proxiedicepingreply" << ping_type;
+                    SendIcePingReply(response_packet->GetSequenceNumber(), ping_type);
+                }
+                else if (response_packet->GetType() == PacketType::ProxiedDomainListRequest) {
+                    //qDebug() << "proxieddomainlistrequest";
+                    SendDomainListRequest(response_packet->GetSequenceNumber());
+                }
+                else {
+                    this->SendDomainServerMessage(packet);
+                }
             }
         }
         else if (server == NodeType::AssetServer) {

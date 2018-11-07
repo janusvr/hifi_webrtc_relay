@@ -501,6 +501,7 @@ void HifiConnection::ParseHifiResponse()
 
             if (domain_uuid != domain_id){
                 qDebug() << "HifiConnection::ParseHifiResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
+                ice_response_timer->stop();
                 Q_EMIT Disconnected();
             }
 

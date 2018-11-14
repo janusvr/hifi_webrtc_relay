@@ -29,8 +29,7 @@ HifiConnection::HifiConnection(QWebSocket * s)
     has_tcp_checked_local_socket = false;
     UpdateLocalSocket();
 
-    connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(HifiConnect()));
-    connect(this, SIGNAL(StartHifiConnection()), this, SLOT(StartStun()));
+    connect(this, SIGNAL(WebRTCConnectionReady()), this, SLOT(StartStun()));
     connect(this, SIGNAL(StunFinished()), this, SLOT(StartIce()));
     connect(this, SIGNAL(IceFinished()), this, SLOT(StartDomainConnect()));
 
@@ -69,6 +68,10 @@ HifiConnection::HifiConnection(QWebSocket * s)
     connect(client_socket, &QWebSocket::textMessageReceived, this, &HifiConnection::ClientMessageReceived);
     connect(client_socket, &QWebSocket::disconnected, this, &HifiConnection::ClientDisconnected);
 
+    started_hifi_connect = false;
+    hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
+    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseHifiResponse()));
+
     QJsonObject connected_object;
     connected_object.insert("type", QJsonValue::fromVariant("connected"));
     connected_object.insert("id", QJsonValue::fromVariant(ice_client_id.toString()));
@@ -105,8 +108,8 @@ void HifiConnection::HandleLookupResult(const QHostInfo& hostInfo, QString addr_
 void HifiConnection::UpdateLocalSocket()
 {
     // attempt to use Google's DNS to confirm that local IP
-    static const QHostAddress RELIABLE_LOCAL_IP_CHECK_HOST = QHostAddress { "8.8.8.8" };
-    static const int RELIABLE_LOCAL_IP_CHECK_PORT = 53;
+    const QHostAddress RELIABLE_LOCAL_IP_CHECK_HOST = QHostAddress { "8.8.8.8" };
+    const int RELIABLE_LOCAL_IP_CHECK_PORT = 53;
 
     QTcpSocket* localIPTestSocket = new QTcpSocket;
 
@@ -201,20 +204,17 @@ void HifiConnection::Stop()
     if (entity_script_server) delete entity_script_server;
     if (entity_server) delete entity_server;
 
-    if (ice_response_timer)
-    {
+    if (ice_response_timer) {
         delete ice_response_timer;
         ice_response_timer = NULL;
     }
 
-    if (stun_response_timer)
-    {
+    if (stun_response_timer) {
         delete stun_response_timer;
         stun_response_timer = NULL;
     }
 
-    if (hifi_response_timer)
-    {
+    if (hifi_response_timer) {
         delete hifi_response_timer;
         hifi_response_timer = NULL;
     }
@@ -231,7 +231,9 @@ void HifiConnection::Stop()
 
 void HifiConnection::DomainRequestFinished()
 {
+    QNetworkReply *domain_reply = qobject_cast<QNetworkReply *>(sender());
     if (domain_reply) {
+        QByteArray domain_reply_contents;
         if (domain_reply->error() == QNetworkReply::NoError && domain_reply->isOpen()) {
             domain_reply_contents += domain_reply->readAll();
 
@@ -258,14 +260,20 @@ void HifiConnection::DomainRequestFinished()
     qDebug() << "HifiConnection::domainRequestFinished() - Domain ID" << domain_id;
 
     finished_domain_id_request = true;
-    if (DataChannelsReady() && finished_domain_id_request) {
+    if (DataChannelsReady() && finished_domain_id_request && !started_hifi_connect) {
+        started_hifi_connect = true;
         Q_EMIT WebRTCConnectionReady();
     }
 }
 
-void HifiConnection::HifiConnect()
+void HifiConnection::StartStun()
 {
     // Register Domain Server DC callbacks here
+    std::function<void(std::string)> onErrorCallback = [this](std::string message) {
+        qDebug() << "HifiConnection::onError() - Data channel error" << QString::fromStdString(message);
+    };
+    data_channel->SetOnErrorCallback(onErrorCallback);
+
     std::function<void(std::string)> onStringMessageCallback = [this](std::string message) {
         NodeType_t server = (NodeType_t) message.front();
         QString packet = QString::fromStdString(message.substr(1,message.size() - 1));
@@ -371,17 +379,8 @@ void HifiConnection::HifiConnect()
     data_channel->SetOnClosedCallback(onClosed);
     //this->SendClientMessage(QString("test_message"));
 
-    hifi_socket = QSharedPointer<QUdpSocket>(new QUdpSocket(this));
-    connect(hifi_socket.data(), SIGNAL(readyRead()), this, SLOT(ParseHifiResponse()));
-
-    Q_EMIT StartHifiConnection();
-}
-
-void HifiConnection::StartStun()
-{
     num_requests = 0;
     has_completed_current_request = false;
-
 
     stun_response_timer->start();
 }
@@ -403,6 +402,7 @@ void HifiConnection::StartDomainConnect()
 
     hifi_response_timer->start();
 }
+
 void HifiConnection::ParseHifiResponse()
 {
     while (hifi_socket->hasPendingDatagrams()) {
@@ -476,11 +476,12 @@ void HifiConnection::ParseHifiResponse()
                         has_completed_current_request = true;
                         stun_response_timer->stop();
 
-                        SendMessageToNode(NodeType::DomainServer, datagram);
+                        SendClientMessageFromNode(NodeType::DomainServer, datagram);
                         Q_EMIT StunFinished();
                         break;
                     }
-                } else {
+                }
+                else {
                     // push forward attribute_start_index by the length of this attribute
                     const int NUM_BYTES_ATTRIBUTE_TYPE = 2;
 
@@ -495,56 +496,48 @@ void HifiConnection::ParseHifiResponse()
             continue;
         }
 
-        std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size());// check if this was a control packet or a data packet
-        //qDebug() << "HifiConnection::ParseHifiResponse() - Packet type" << (int) response_packet->GetType();
-
         bool is_control_packet = *reinterpret_cast<uint32_t*>(datagram.data()) & CONTROL_BIT_MASK;
-        if (is_control_packet) {
-            Node * node = GetNodeFromAddress(sender, sender_port);
-
-            if (node) {
-                SendMessageToNode(node->GetNodeType(), datagram);
-            }
-            else {
-                SendMessageToNode(NodeType::DomainServer, datagram);
-            }
-            continue;
+        if (!is_control_packet) {
+            ParseDatagram(datagram);
         }
 
-        //ICE response
-        if (response_packet->GetType() == PacketType::ICEServerPeerInformation)
-        {
-            QDataStream ice_response_stream(response_packet.get()->readAll());
-            QUuid domain_uuid;
-            ice_response_stream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
-
-            if (domain_uuid != domain_id){
-                qDebug() << "HifiConnection::ParseHifiResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
-                ice_response_timer->stop();
-                Q_EMIT Disconnected();
-            }
-
-            qDebug() << "HifiConnection::ParseHifiResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
-
-            has_completed_current_request = true;
-            if (!started_domain_connect)
-            {
-                ice_response_timer->stop();
-                Q_EMIT IceFinished();
-            }
-
-            SendMessageToNode(NodeType::DomainServer, datagram);
-            continue;
+        Node * node = GetNodeFromAddress(sender, sender_port);
+        if (node) {
+            SendClientMessageFromNode(node->GetNodeType(), datagram);
         }
-
-        ParseDatagram(datagram, sender, sender_port);
+        else {
+            SendClientMessageFromNode(NodeType::DomainServer, datagram);
+        }
     }
 }
 
-void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, quint16 sender_port)
+void HifiConnection::ParseDatagram(QByteArray datagram)
 {
     std::unique_ptr<Packet> response_packet = Packet::FromReceivedPacket(datagram.data(), (qint64) datagram.size());// check if this was a control packet or a data packet
-    if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
+    //qDebug() << "HifiConnection::ParseHifiResponse() - Packet type" << (int) response_packet->GetType();
+    //ICE response
+    if (response_packet->GetType() == PacketType::ICEServerPeerInformation)
+    {
+        QDataStream ice_response_stream(response_packet.get()->readAll());
+        QUuid domain_uuid;
+        ice_response_stream >> domain_uuid >> domain_public_address >> domain_public_port >> domain_local_address >> domain_local_port;
+
+        if (domain_uuid != domain_id){
+            qDebug() << "HifiConnection::ParseHifiResponse() - Error: Domain ID's do not match " << domain_uuid << domain_id;
+            ice_response_timer->stop();
+            Q_EMIT Disconnected();
+        }
+
+        qDebug() << "HifiConnection::ParseHifiResponse() - Domain ID: " << domain_uuid << "Domain Public Address: " << domain_public_address << "Domain Public Port: " << domain_public_port << "Domain Local Address: " << domain_local_address << "Domain Local Port: " << domain_local_port;
+
+        has_completed_current_request = true;
+        if (!started_domain_connect)
+        {
+            ice_response_timer->stop();
+            Q_EMIT IceFinished();
+        }
+    }
+    else if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
         qDebug() << "HifiConnection::ParseHifiResponse() - Process domain list";
         QDataStream packet_stream(response_packet->readAll());
 
@@ -587,9 +580,6 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         while (packet_stream.device()->pos() < response_packet->GetDataSize() - response_packet->TotalHeaderSize()) {
             ParseNodeFromPacketStream(packet_stream);
         }
-
-        // Relay domain list packet over to client
-        SendMessageToNode(NodeType::DomainServer, datagram);
     }
     else if (response_packet->GetType() == PacketType::DomainConnectionDenied) {
         uint8_t reasonCode;
@@ -605,19 +595,6 @@ void HifiConnection::ParseDatagram(QByteArray datagram, QHostAddress sender, qui
         QString reason = QString::fromUtf8(utfReason.constData(), reasonSize);*/
 
         qDebug() << "HifiConnection::ParseHifiResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
-
-        SendMessageToNode(NodeType::DomainServer, datagram);
-    }
-    else {
-        // Send any other types of packets to the client
-        Node * node = GetNodeFromAddress(sender, sender_port);
-
-        if (node) {
-            SendMessageToNode(node->GetNodeType(), datagram);
-        }
-        else {
-            SendMessageToNode(NodeType::DomainServer, datagram);
-        }
     }
 }
 
@@ -654,13 +631,7 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
     node->SetIsReplicated(is_replicated);
     node->SetConnectionSecret(connection_secret_uuid);
     node->SetPermissions((Permissions) node_permissions);
-
-    // nodes that are downstream or upstream of our own type are kept alive when we hear about them from the domain server
-    // and always have their public socket as their active socket
-    //if (node->GetType() == NodeType::downstreamType(_ownerType) || node->GetType() == NodeType::upstreamType(_ownerType)) {
-    //    node->setLastHeardMicrostamp(usecTimestampNow());
-        node->ActivatePublicSocket(hifi_socket);
-    //}
+    node->ActivatePublicSocket(hifi_socket);
 
     switch (node_type) {
         case NodeType::AssetServer : {
@@ -711,8 +682,7 @@ void HifiConnection::SendStunRequest()
         return;
     }
 
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL) {
         qDebug() << "HifiConnection::SendStunRequest() - Stopping stun requests to" << stun_server_hostname << stun_server_port;
         stun_response_timer->stop();
         Q_EMIT Disconnected();
@@ -759,8 +729,7 @@ void HifiConnection::SendStunRequest()
 
 void HifiConnection::SendIceRequest()
 {
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL) {
         qDebug() << "HifiConnection::SendIceRequest() - Stopping ice requests to" << ice_server_address << ice_server_port;
 
         ice_response_timer->stop();
@@ -800,8 +769,7 @@ void HifiConnection::SendDomainConnectRequest()
         return;
     }
 
-    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL)
-    {
+    if (num_requests == HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL) {
             qDebug() << "HifiConnection::SendDomainConnectRequest() - Stopping domain requests to" << domain_place_name;
 
         hifi_response_timer->stop();
@@ -834,7 +802,6 @@ void HifiConnection::SendDomainConnectRequest()
     //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
     domain_connect_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint()
                             << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
-
 
     hifi_socket->writeDatagram(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
 }
@@ -886,6 +853,8 @@ void HifiConnection::SendIcePingReply(uint32_t s, quint8 ping_type)
 void HifiConnection::ClientMessageReceived(const QString &message)
 {
     //qDebug() << "HifiConnection::ClientMessageReceived() - " << message;
+    if (started_hifi_connect) return;
+
     QJsonDocument doc;
     doc = QJsonDocument::fromJson(message.toLatin1());
     QJsonObject obj = doc.object();
@@ -896,7 +865,7 @@ void HifiConnection::ClientMessageReceived(const QString &message)
         if (domain_name == "") {
             domain_name = obj["domain_name"].toString();
 
-            if (domain_name.left(7) == "hifi://"){
+            if (domain_name.left(7) == "hifi://") {
                 domain_name = domain_name.remove("hifi://");
             }
 
@@ -905,18 +874,16 @@ void HifiConnection::ClientMessageReceived(const QString &message)
             QNetworkAccessManager * nam = new QNetworkAccessManager(this);
             QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
             request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-            domain_reply = nam->get(request);
+            QNetworkReply * domain_reply = nam->get(request);
             connect(domain_reply, SIGNAL(finished()), this, SLOT(DomainRequestFinished()));
         }
     }
-    else if (type == "offer")
-    {
+    else if (type == "offer") {
         rtcdcpp::RTCConfiguration config;
-        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun3.l.google.com", 19302});
+        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun.l.google.com", 19302});
 
         std::function<void(rtcdcpp::PeerConnection::IceCandidate)> onLocalIceCandidate = [this](rtcdcpp::PeerConnection::IceCandidate candidate) {
-            if (QString::fromStdString(candidate.candidate) != "")
-            {
+            if (QString::fromStdString(candidate.candidate) != "") {
                 QJsonObject candidate_object;
                 candidate_object.insert("type", QJsonValue::fromVariant("candidate"));
                 QJsonObject candidate_object2;
@@ -940,8 +907,9 @@ void HifiConnection::ClientMessageReceived(const QString &message)
                 this->SetDataChannel(channel);
             }
 
-            if (this->DataChannelsReady() && this->finished_domain_id_request) {
+            if (this->DataChannelsReady() && this->finished_domain_id_request && !this->started_hifi_connect) {
                 qDebug() << "HifiConnection::WebRTCConnectionReady() - Data channels registered";
+                started_hifi_connect = true;
                 Q_EMIT WebRTCConnectionReady();
             }
         };
@@ -958,8 +926,7 @@ void HifiConnection::ClientMessageReceived(const QString &message)
         if (this->client_socket)
             client_socket->sendTextMessage(QString::fromStdString(answerDoc.toJson(QJsonDocument::Compact).toStdString()));
     }
-    else if (type == "candidate")
-    {
+    else if (type == "candidate") {
         //qDebug() << "remote candidate";
         QJsonObject c = obj["candidate"].toObject();
         remote_peer_connection->SetRemoteIceCandidate("a=" + c["candidate"].toString().toStdString());

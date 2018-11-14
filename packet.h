@@ -396,68 +396,24 @@ public:
     };
 
     Packet(uint32_t sequence, PacketType t, qint64 size = MAX_PACKET_SIZE, bool reliable = false, bool part_of_message = false);
-    Packet(uint32_t sequence, ControlType t, qint64 size = MAX_PACKET_SIZE){
-        control_type = t;
-
-        packet_size = (size == -1) ? MAX_PACKET_SIZE: size;
-        payload_size = 0;
-        payload_capacity = packet_size;
-        packet.reset(new char[packet_size]());
-
-        payload_start = packet.get();
-        sequence_number = sequence;
-        is_part_of_message = false;
-
-        AdjustPayloadStartAndCapacity(Packet::LocalControlHeaderSize());
-        open(QIODevice::ReadWrite);
-
-        WriteControlType();
-        //write(reinterpret_cast<const char*>(&sequence_number), sizeof(uint32_t));
-    }
+    Packet(uint32_t sequence, ControlType t, qint64 size = MAX_PACKET_SIZE);
     Packet(char * data, qint64 size);
 
     static int HeaderSize(bool is_part_of_message);
     static int LocalHeaderSize(PacketType type);
-    static int LocalControlHeaderSize() {
-        return sizeof(ControlBitAndType);
-    }
+    static int LocalControlHeaderSize();
     int TotalHeaderSize();
 
     static std::unique_ptr<Packet> Create(uint32_t sequence, PacketType t, qint64 size = -1);
     static std::unique_ptr<Packet> FromReceivedPacket(char * data, qint64 size);
 
-    static std::unique_ptr<Packet> CreateControl(uint32_t sequence, ControlType t, qint64 size = -1)
-    {
-        //return std::unique_ptr<Packet>(new Packet(sequence, t, HeaderSize(false) + Packet::LocalControlHeaderSize() + size));
-        return std::unique_ptr<Packet>(new Packet(sequence, t, Packet::LocalControlHeaderSize() + size));
-    }
-    static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size)
-    {
-        // allocate memory
-        auto packet = std::unique_ptr<Packet>(new Packet(data, Packet::LocalControlHeaderSize() + size));
-
-        packet->open(QIODevice::ReadOnly);
-
-        return packet;
-    }
+    static std::unique_ptr<Packet> CreateControl(uint32_t sequence, ControlType t, qint64 size = -1);
+    static std::unique_ptr<Packet> FromReceivedControlPacket(char * data, qint64 size);
 
     void Obfuscate(ObfuscationLevel level);
 
-    void WriteControlType() {
-        ControlBitAndType* bit_and_type = reinterpret_cast<ControlBitAndType*>(packet.get());
-
-        // We override the control bit here by writing the type but it's okay, it'll always be 1
-        *bit_and_type = CONTROL_BIT_MASK | (ControlBitAndType(control_type) << (8 * sizeof(ControlType)));
-    }
-
-    void ReadControlType() {
-        ControlBitAndType bit_and_type = *reinterpret_cast<ControlBitAndType*>(packet.get());
-
-        uint16_t packet_type = (bit_and_type & ~CONTROL_BIT_MASK) >> (8 * sizeof(ControlType));
-
-        // read the type
-        control_type = (ControlType) packet_type;
-    }
+    void WriteControlType();
+    void ReadControlType();
 
     void WriteSourceID(quint16 s);
     void WriteVerificationHash(HMACAuth * h);

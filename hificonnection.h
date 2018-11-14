@@ -61,25 +61,24 @@ public:
     void SendDomainServerMessage(QByteArray message) {hifi_socket->writeDatagram(message, domain_public_address, domain_public_port);}
 
     void SendClientMessage(QString message) {data_channel->SendString(message.toStdString());}
-    void SendClientMessage(QByteArray message) {data_channel->SendBinary((const uint8_t *) message.data(), message.size());}
+    void SendClientMessage(char * data, int len) {data_channel->SendBinary((const uint8_t *) data, len);}
 
     Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
     void SendDomainListRequest(uint32_t s);
 
-    void SendMessageToNode(NodeType_t node_type, QByteArray data) {
+    void SendClientMessageFromNode(NodeType_t node_type, QByteArray data) {
         data.push_front((char) node_type);
-        SendClientMessage(data);
+        SendClientMessage(data.data(), data.size());
     }
 
-    void ParseDatagram(QByteArray response_packet, QHostAddress sender, quint16 sender_port);
+    void ParseDatagram(QByteArray response_packet);
 
 Q_SIGNALS:
 
     void Disconnected();
     void WebRTCConnectionReady();
 
-    void StartHifiConnection();
     void StunFinished();
     void IceFinished();
 
@@ -89,8 +88,6 @@ public Q_SLOTS:
     void ErrorTestingLocalSocket();
 
     void DomainRequestFinished();
-
-    void HifiConnect();
 
     void StartIce();
     void StartStun();
@@ -113,9 +110,6 @@ private:
         return uuid_string_no_braces;
     }
 
-    QNetworkReply * domain_reply;
-    QByteArray domain_reply_contents;
-
     bool has_tcp_checked_local_socket;
 
     QSharedPointer<QUdpSocket> hifi_socket;
@@ -129,6 +123,8 @@ private:
     quint16 local_port;
 
     QUuid ice_client_id;
+
+    bool started_hifi_connect;
 
     bool has_completed_current_request;
     bool domain_connected;
@@ -173,6 +169,7 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
+    static int num_connections;
 };
 
 #endif // HIFICONNECTION_H

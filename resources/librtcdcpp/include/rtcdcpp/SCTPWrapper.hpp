@@ -105,5 +105,7 @@ class SCTPWrapper {
                           void *user_data);
 
   std::shared_ptr<Logger> logger = GetLogger("rtcdcpp.SCTP");
+
+  static bool usrsctp_initialized;
 };
 }

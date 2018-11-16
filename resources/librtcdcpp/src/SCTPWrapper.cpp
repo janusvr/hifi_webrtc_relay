@@ -37,6 +37,8 @@ namespace rtcdcpp {
 
 using namespace std;
 
+bool SCTPWrapper::usrsctp_initialized = false;
+
 SCTPWrapper::SCTPWrapper(DTLSEncryptCallbackPtr dtlsEncryptCB, MsgReceivedCallbackPtr msgReceivedCB)
     : local_port(5000),  // XXX: Hard-coded for now
       remote_port(5000),
@@ -178,8 +180,11 @@ void SCTPWrapper::OnMsgReceived(const uint8_t *data, size_t len, int ppid, int s
 }
 
 bool SCTPWrapper::Initialize() {
-  usrsctp_init(0, &SCTPWrapper::_OnSCTPForDTLS, &SCTPWrapper::_DebugLog);
-  usrsctp_sysctl_set_sctp_ecn_enable(0);
+  if (!usrsctp_initialized) {
+      usrsctp_initialized = true;
+      usrsctp_init(0, &SCTPWrapper::_OnSCTPForDTLS, &SCTPWrapper::_DebugLog);
+      usrsctp_sysctl_set_sctp_ecn_enable(0);
+  }
   usrsctp_register_address(this);
 
   sock = usrsctp_socket(AF_CONN, SOCK_STREAM, IPPROTO_SCTP, &SCTPWrapper::_OnSCTPForGS, NULL, 0, this);

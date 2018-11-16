@@ -169,7 +169,6 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
-    static int num_connections;
 };
 
 #endif // HIFICONNECTION_H

@@ -879,9 +879,6 @@ void HifiConnection::ClientMessageReceived(const QString &message)
         }
     }
     else if (type == "offer") {
-        rtcdcpp::RTCConfiguration config;
-        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun.l.google.com", 19302});
-
         std::function<void(rtcdcpp::PeerConnection::IceCandidate)> onLocalIceCandidate = [this](rtcdcpp::PeerConnection::IceCandidate candidate) {
             if (QString::fromStdString(candidate.candidate) != "") {
                 QJsonObject candidate_object;
@@ -913,6 +910,9 @@ void HifiConnection::ClientMessageReceived(const QString &message)
                 Q_EMIT WebRTCConnectionReady();
             }
         };
+
+        rtcdcpp::RTCConfiguration config;
+        config.ice_servers.emplace_back(rtcdcpp::RTCIceServer{"stun.l.google.com", 19302});
 
         remote_peer_connection = std::make_shared<rtcdcpp::PeerConnection>(config, onLocalIceCandidate, onDataChannel);
 

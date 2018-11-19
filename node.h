@@ -79,10 +79,6 @@ public:
 
     bool CheckNodeAddress(QHostAddress a, quint16 p);
 
-Q_SIGNALS:
-    void Disconnected();
-    void HandshakeAckReceived();
-
 private:
     QUuid node_id;
     NodeType_t node_type;

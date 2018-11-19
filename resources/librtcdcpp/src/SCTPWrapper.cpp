@@ -168,7 +168,7 @@ int SCTPWrapper::OnSCTPForGS(struct socket *sock, union sctp_sockstore addr, voi
   if (flags & MSG_NOTIFICATION) {
     OnNotification((union sctp_notification *)data, len);
   } else {
-    std::cout << "Got msg of size: " << len << "\n";
+    //std::cout << "Got msg of size: " << len << "\n";
     OnMsgReceived((const uint8_t *)data, len, recv_info.rcv_sid, ntohl(recv_info.rcv_ppid));
   }
   free(data);

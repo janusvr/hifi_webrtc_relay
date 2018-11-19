@@ -20,6 +20,7 @@ Task::~Task()
     for (int i = 0; i < hifi_connections.size(); i++)
     {
         hifi_connections[i]->Stop();
+        hifi_connections[i]->disconnect();
         delete hifi_connections[i];
     }
     signaling_server->close();
@@ -56,7 +57,7 @@ void Task::Connect()
     QWebSocket *s = signaling_server->nextPendingConnection();
 
     HifiConnection * h = new HifiConnection(s);
-    connect(h, SIGNAL(Disconnected()), this, SLOT(DisconnectHifiConnection()));
+    connect(h, SIGNAL(Disconnected()), this, SLOT(DisconnectHifiConnection()), Qt::QueuedConnection);
     hifi_connections.push_back(h);
 }
 
@@ -82,6 +83,7 @@ void Task::DisconnectHifiConnection()
         hifi_connections.removeAll(s);
         qDebug() << "Task::DisconnectHifiConnection()" << s;
         s->Stop();
-        //delete s;
+        s->disconnect();
+        //s->deleteLater();
     }
 }

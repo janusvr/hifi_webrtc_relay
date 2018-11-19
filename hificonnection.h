@@ -48,29 +48,20 @@ public:
 
     void SendIcePing(uint32_t s, quint8 ping_type);
     void SendIcePingReply(uint32_t s, quint8 ping_type);
+    void SendDomainListRequest(uint32_t s);
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
-    void SetDataChannel(std::shared_ptr<rtcdcpp::DataChannel> d) {data_channel = d;}
-
-    bool DataChannelsReady(){
-        return (data_channel != nullptr);
-    }
-
-    void SendDomainServerMessage(QString message) {hifi_socket->writeDatagram(message.toLatin1(), domain_public_address, domain_public_port);}
-    void SendDomainServerMessage(QByteArray message) {hifi_socket->writeDatagram(message, domain_public_address, domain_public_port);}
-
-    void SendClientMessage(QString message) {data_channel->SendString(message.toStdString());}
-    void SendClientMessage(char * data, int len) {data_channel->SendBinary((const uint8_t *) data, len);}
-
-    Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
-
-    void SendDomainListRequest(uint32_t s);
+    void SendServerMessage(QByteArray message, QHostAddress address, quint16 port) {if (hifi_socket) hifi_socket->writeDatagram(message, address, port);}
+    void SendServerMessage(char * message, int len, QHostAddress address, quint16 port) {if (hifi_socket) hifi_socket->writeDatagram(message, len, address, port);}
 
     void SendClientMessageFromNode(NodeType_t node_type, QByteArray data) {
         data.push_front((char) node_type);
         SendClientMessage(data.data(), data.size());
     }
+    void SendClientMessage(char * data, int len) {if (data_channel) data_channel->SendBinary((const uint8_t *) data, len);}
+
+    Node * GetNodeFromAddress(QHostAddress sender, quint16 sender_port);
 
     void ParseDatagram(QByteArray response_packet);
 
@@ -112,7 +103,7 @@ private:
 
     bool has_tcp_checked_local_socket;
 
-    QSharedPointer<QUdpSocket> hifi_socket;
+    QUdpSocket * hifi_socket;
     QTimer * stun_response_timer;
     QTimer * ice_response_timer;
     QTimer * hifi_response_timer;

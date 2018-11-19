@@ -10,9 +10,7 @@ Node::Node()
 
 Node::~Node()
 {
-    if (node_socket) {
-        node_socket.clear();
-    }
+
 }
 
 void Node::SetNodeID(QUuid n)
@@ -71,13 +69,28 @@ void Node::SetPermissions(Permissions p)
     permissions = p;
 }
 
-void Node::ActivatePublicSocket(QSharedPointer<QUdpSocket> s)
-{
-    node_socket = s;
-}
-
 bool Node::CheckNodeAddress(QHostAddress a, quint16 p)
 {
     //qDebug() << a.toIPv4Address()<< public_address.toIPv4Address() << p << public_port;
     return (a.toIPv4Address() == public_address.toIPv4Address() && p == public_port);
+}
+
+QHostAddress Node::GetPublicAddress()
+{
+    return public_address;
+}
+
+quint16 Node::GetPublicPort()
+{
+    return public_port;
+}
+
+QHostAddress Node::GetLocalAddress()
+{
+    return local_address;
+}
+
+quint16 Node::GetLocalPort()
+{
+    return local_port;
 }

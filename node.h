@@ -72,10 +72,10 @@ public:
     void SetConnectionSecret(QUuid c);
     void SetPermissions(Permissions p);
 
-    void ActivatePublicSocket(QSharedPointer<QUdpSocket> s);
-
-    void SendMessageToServer(QString message) {node_socket->writeDatagram(message.toLatin1(), public_address, public_port);}
-    void SendMessageToServer(QByteArray message) {node_socket->writeDatagram(message, public_address, public_port);}
+    QHostAddress GetPublicAddress();
+    quint16 GetPublicPort();
+    QHostAddress GetLocalAddress();
+    quint16 GetLocalPort();
 
     bool CheckNodeAddress(QHostAddress a, quint16 p);
 
@@ -98,8 +98,6 @@ private:
     quint16 domain_session_local_id;
 
     std::unique_ptr<HMACAuth> authenticate_hash;
-
-    QSharedPointer<QUdpSocket> node_socket;
 
     QTimer * hifi_response_timer;
 

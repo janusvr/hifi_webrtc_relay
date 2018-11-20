@@ -44,6 +44,17 @@ public:
     void UpdateLocalSocket();
     QHostAddress GetGuessedLocalAddress();
 
+    void ClearDataChannel() {
+        std::function<void(std::string)> onErrorCallback = [](std::string x) { ; };
+        data_channel->SetOnErrorCallback(onErrorCallback);
+        std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [](rtcdcpp::ChunkPtr data) { ; };
+        data_channel->SetOnBinaryMsgCallback(onBinaryMessageCallback);
+        std::function<void()> onClosed = []() { ; };
+        data_channel->SetOnClosedCallback(onClosed);
+
+        data_channel = nullptr;
+    }
+
     void Stop();
 
     void SendIcePing(uint32_t s, quint8 ping_type);
@@ -75,6 +86,8 @@ Q_SIGNALS:
 
 public Q_SLOTS:
 
+    void Timeout();
+
     void ConnectedForLocalSocketTest();
     void ErrorTestingLocalSocket();
 
@@ -90,9 +103,7 @@ public Q_SLOTS:
     void ParseHifiResponse();
 
     void ClientMessageReceived(const QString &message);
-    void ClientDisconnected();
     void ServerDisconnected();
-    void NodeDisconnected();
 
 private:
 
@@ -104,6 +115,7 @@ private:
     bool has_tcp_checked_local_socket;
 
     QUdpSocket * hifi_socket;
+    QTimer * timeout_timer;
     QTimer * stun_response_timer;
     QTimer * ice_response_timer;
     QTimer * hifi_response_timer;
@@ -160,6 +172,9 @@ private:
     QString ice_server_hostname;
     QHostAddress ice_server_address;
     quint16 ice_server_port;
+
+    quint64 client_timestamp;
+    quint64 server_timestamp;
 };
 
 #endif // HIFICONNECTION_H

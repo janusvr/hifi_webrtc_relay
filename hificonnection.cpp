@@ -66,7 +66,6 @@ HifiConnection::HifiConnection(QWebSocket * s)
     client_socket = s;
 
     connect(client_socket, &QWebSocket::textMessageReceived, this, &HifiConnection::ClientMessageReceived);
-    connect(client_socket, &QWebSocket::disconnected, this, &HifiConnection::ClientDisconnected);
 
     started_hifi_connect = false;
     hifi_socket = new QUdpSocket(this);
@@ -77,6 +76,14 @@ HifiConnection::HifiConnection(QWebSocket * s)
     connected_object.insert("id", QJsonValue::fromVariant(ice_client_id.toString()));
     QJsonDocument connectedDoc(connected_object);
     client_socket->sendTextMessage(QString::fromStdString(connectedDoc.toJson(QJsonDocument::Compact).toStdString()));
+
+    client_timestamp = Utils::GetTimestamp();
+    server_timestamp = client_timestamp;
+
+    timeout_timer = new QTimer { this };
+    connect(timeout_timer, &QTimer::timeout, this, &HifiConnection::Timeout);
+    timeout_timer->setInterval(HIFI_TIMEOUT_MSEC/4);
+    timeout_timer->start();
 }
 
 HifiConnection::~HifiConnection()
@@ -223,7 +230,12 @@ void HifiConnection::Stop()
     }
 
     if (data_channel) {
-        data_channel = nullptr;
+        ClearDataChannel();
+    }
+
+    if (timeout_timer) {
+        delete timeout_timer;
+        timeout_timer = nullptr;
     }
 
     if (ice_response_timer) {
@@ -298,6 +310,8 @@ void HifiConnection::StartStun()
     data_channel->SetOnErrorCallback(onErrorCallback);
 
     std::function<void(rtcdcpp::ChunkPtr)> onBinaryMessageCallback = [this](rtcdcpp::ChunkPtr message) {
+        this->client_timestamp = Utils::GetTimestamp();
+
         NodeType_t server = (NodeType_t) message->Data()[0];
         QByteArray packet = QByteArray((char *) (message->Data() + sizeof(NodeType_t)), message->Length() - 1);
         //qDebug() << "HifiConnection::onMessage() - " << (char) server << packet << packet.size();
@@ -360,7 +374,7 @@ void HifiConnection::StartStun()
 
     std::function<void()> onClosed = [this]() {
         qDebug() << "HifiConnection::onClosed() - Domain Server data channel closed";
-        data_channel = nullptr;
+        ClearDataChannel();
         Q_EMIT Disconnected();
     };
     data_channel->SetOnClosedCallback(onClosed);
@@ -369,6 +383,35 @@ void HifiConnection::StartStun()
     has_completed_current_request = false;
 
     stun_response_timer->start();
+}
+
+void HifiConnection::Timeout()
+{
+    quint64 timestamp = Utils::GetTimestamp();
+    //qDebug() << "Timeout" << timestamp / 1000 << client_timestamp / 1000 << server_timestamp / 1000;
+
+    if (timestamp > client_timestamp && (timestamp - client_timestamp) / 1000 > HIFI_TIMEOUT_MSEC) { // Convert to millisecond
+        qDebug() << "HifiConnection::Timeout() - Client connection timed out. Disconnecting...";
+
+        if (timeout_timer) {
+            delete timeout_timer;
+            timeout_timer = nullptr;
+        }
+
+        Q_EMIT Disconnected();
+        return;
+    }
+    else if (timestamp > server_timestamp && (timestamp - server_timestamp) / 1000000 > HIFI_TIMEOUT_MSEC) { // Convert to millisecond
+        qDebug() << "HifiConnection::Timeout() - Server connection timed out. Disconnecting...";
+
+        if (timeout_timer) {
+            delete timeout_timer;
+            timeout_timer = nullptr;
+        }
+
+        Q_EMIT Disconnected();
+        return;
+    }
 }
 
 void HifiConnection::StartIce()
@@ -398,6 +441,8 @@ void HifiConnection::ParseHifiResponse()
         quint16 sender_port;
 
         hifi_socket->readDatagram(datagram.data(), datagram.size(), &sender, &sender_port);
+
+        server_timestamp = Utils::GetTimestamp();
 
         //Stun Server response;
         if (sender.toIPv4Address() == stun_server_address.toIPv4Address() && sender_port == stun_server_port) {
@@ -622,37 +667,31 @@ void HifiConnection::ParseNodeFromPacketStream(QDataStream& packet_stream)
         case NodeType::AssetServer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering asset server" << node_public_address << node_public_port;
             asset_server = node;
-            connect(asset_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         case NodeType::AudioMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering audio mixer" << node_public_address << node_public_port;
             audio_mixer = node;
-            connect(audio_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         case NodeType::AvatarMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering avatar mixer" << node_public_address << node_public_port;
             avatar_mixer = node;
-            connect(avatar_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         case NodeType::MessagesMixer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering messages mixer" << node_public_address << node_public_port;
             messages_mixer = node;
-            connect(messages_mixer, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         case NodeType::EntityServer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering entity server" << node_public_address << node_public_port;
             entity_server = node;
-            connect(entity_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         case NodeType::EntityScriptServer : {
             qDebug() << "HifiConnection::ParseNodeFromPacketStream() - Registering entity script server" << node_public_address << node_public_port;
             entity_script_server = node;
-            connect(entity_script_server, SIGNAL(Disconnected()), this, SLOT(NodeDisconnected()));
             break;
         }
         default: {
@@ -916,17 +955,7 @@ void HifiConnection::ClientMessageReceived(const QString &message)
     }
 }
 
-void HifiConnection::ClientDisconnected()
-{
-    Q_EMIT Disconnected();
-}
-
 void HifiConnection::ServerDisconnected()
-{
-    Q_EMIT Disconnected();
-}
-
-void HifiConnection::NodeDisconnected()
 {
     Q_EMIT Disconnected();
 }

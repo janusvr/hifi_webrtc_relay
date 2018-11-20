@@ -17,6 +17,8 @@ const int HIFI_PING_UPDATE_INTERVAL_MSEC = 1000;
 const int HIFI_NUM_INITIAL_REQUESTS_BEFORE_FAIL = 10;
 const int NUM_BYTES_RFC4122_UUID = 16;
 
+const int HIFI_TIMEOUT_MSEC = 10000;
+
 class Utils
 {
 public:

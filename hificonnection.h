@@ -59,7 +59,7 @@ public:
 
     void SendIcePing(uint32_t s, quint8 ping_type);
     void SendIcePingReply(uint32_t s, quint8 ping_type);
-    void SendDomainListRequest(uint32_t s);
+    void SendDomainCheckInRequest(uint32_t s = 0);
 
     void ParseNodeFromPacketStream(QDataStream& packet_stream);
 
@@ -99,7 +99,7 @@ public Q_SLOTS:
 
     void SendStunRequest();
     void SendIceRequest();
-    void SendDomainConnectRequest();
+    void SendDomainCheckIn();
     void ParseHifiResponse();
 
     void ClientMessageReceived(const QString &message);

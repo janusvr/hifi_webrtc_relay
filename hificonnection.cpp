@@ -59,7 +59,7 @@ HifiConnection::HifiConnection(QWebSocket * s)
     ice_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     hifi_response_timer = new QTimer { this };
-    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendDomainConnectRequest);
+    connect(hifi_response_timer, &QTimer::timeout, this, &HifiConnection::SendDomainCheckIn);
     hifi_response_timer->setInterval(HIFI_INITIAL_UPDATE_INTERVAL_MSEC); // 250ms, Qt::CoarseTimer acceptable
 
     qDebug() << "HifiConnection::Connect() - New client" << s << ice_client_id << s->peerAddress() << s->peerPort();
@@ -338,7 +338,7 @@ void HifiConnection::StartStun()
                 }
                 else if (response_packet->GetType() == PacketType::ProxiedDomainListRequest) {
                     //qDebug() << "proxieddomainlistrequest";
-                    SendDomainListRequest(response_packet->GetSequenceNumber());
+                    SendDomainCheckInRequest(response_packet->GetSequenceNumber());
                 }
                 else {
                     this->SendServerMessage(packet, domain_public_address, domain_public_port);
@@ -568,6 +568,8 @@ void HifiConnection::ParseDatagram(QByteArray datagram)
             Q_EMIT IceFinished();
         }
     }
+    else if (response_packet->GetType() == PacketType::DomainServerConnectionToken) {
+    }
     else if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
         qDebug() << "HifiConnection::ParseHifiResponse() - Process domain list";
         QDataStream packet_stream(response_packet->readAll());
@@ -787,7 +789,7 @@ void HifiConnection::SendIceRequest()
     SendServerMessage(ice_request_packet->GetData(), ice_request_packet->GetDataSize(), ice_server_address, ice_server_port);
 }
 
-void HifiConnection::SendDomainConnectRequest()
+void HifiConnection::SendDomainCheckIn()
 {
     if (!finished_domain_id_request) {
         return;
@@ -813,36 +815,42 @@ void HifiConnection::SendDomainConnectRequest()
         return;
     }
 
-    PacketType packet_type = PacketType::DomainConnectRequest;
-    //PacketVersion version = versionForPacketType(packetType);
-    std::unique_ptr<Packet> domain_connect_request_packet = Packet::Create(0,packet_type);
-    QDataStream domain_connect_data_stream(domain_connect_request_packet.get());
-    domain_connect_data_stream << ice_client_id;
-
-    QByteArray protocol_version_sig = Utils::GetProtocolVersionSignature();
-    domain_connect_data_stream.writeBytes(protocol_version_sig.constData(), protocol_version_sig.size());
-
-    //qDebug() << ice_client_id << protocol_version_sig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
-    //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
-    domain_connect_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint()
-                            << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
-
-    SendServerMessage(domain_connect_request_packet->GetData(), domain_connect_request_packet->GetDataSize(), domain_public_address, domain_public_port);
+    SendDomainCheckInRequest();
 }
 
-void HifiConnection::SendDomainListRequest(uint32_t s)
+void HifiConnection::SendDomainCheckInRequest(uint32_t s)
 {
     if (!finished_domain_id_request) {
         return;
     }
 
-    std::unique_ptr<Packet> domain_list_request_packet = Packet::Create(s,PacketType::DomainListRequest);
-    QDataStream domain_list_data_stream(domain_list_request_packet.get());
-    //qDebug() << "list request" << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
-    domain_list_data_stream << owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name; //TODO: user_name_signature
-    domain_list_request_packet->WriteSourceID(local_id);
+    PacketType packet_type = (domain_connected) ? PacketType::DomainListRequest : PacketType::DomainConnectRequest;
 
-    SendServerMessage(domain_list_request_packet->GetData(), domain_list_request_packet->GetDataSize(), domain_public_address, domain_public_port);
+    std::unique_ptr<Packet> domain_checkin_request_packet = Packet::Create(s,packet_type);
+    QDataStream domain_checkin_data_stream(domain_checkin_request_packet.get());
+
+    if (!domain_connected) {
+        domain_checkin_data_stream << ice_client_id;
+
+        QByteArray protocol_version_sig = Utils::GetProtocolVersionSignature();
+        domain_checkin_data_stream.writeBytes(protocol_version_sig.constData(), protocol_version_sig.size());
+
+        domain_checkin_data_stream << Utils::GetHardwareAddress(local_address) << Utils::GetMachineFingerprint();
+        //qDebug() << ice_client_id << protocol_version_sig << Utils::GetHardwareAddress(hifi_socket->localAddress()) << Utils::GetMachineFingerprint() << (char)owner_type.load()
+        //         << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
+    }
+
+    //qDebug() << "list request" << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
+    //QString user_name = "test";
+    domain_checkin_data_stream << owner_type.load() << public_address << public_port <<local_address << local_port
+                               << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
+
+    if (domain_connected) {
+        // Source domain list packets
+        domain_checkin_request_packet->WriteSourceID(local_id);
+    }
+
+    SendServerMessage(domain_checkin_request_packet->GetData(), domain_checkin_request_packet->GetDataSize(), domain_public_address, domain_public_port);
 }
 
 void HifiConnection::SendIcePing(uint32_t s, quint8 ping_type)

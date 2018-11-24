@@ -4,6 +4,9 @@
 
 HifiConnection::HifiConnection(QWebSocket * s)
 {
+    username = "";
+    keypair_generator = new RSAKeypairGenerator();
+
     domain_name = "";
     domain_place_name = "";
     domain_id = QUuid();
@@ -165,7 +168,6 @@ void HifiConnection::ErrorTestingLocalSocket()
         local_ip_test_socket->deleteLater();
     }
 }
-
 
 QHostAddress HifiConnection::GetGuessedLocalAddress()
 {
@@ -569,6 +571,12 @@ void HifiConnection::ParseDatagram(QByteArray datagram)
         }
     }
     else if (response_packet->GetType() == PacketType::DomainServerConnectionToken) {
+        num_requests = 0; // Reset number of requests so we can keep sending DomainConnectRequests
+
+        QByteArray token(response_packet->readAll().constData(), NUM_BYTES_RFC4122_UUID);
+        domain_connection_token = QUuid::fromRfc4122(token);
+
+        qDebug() << "HifiConnection::ParseHifiResponse() - Domain connection token: " << domain_connection_token;
     }
     else if (response_packet->GetType() == PacketType::DomainList && !domain_connected) {
         qDebug() << "HifiConnection::ParseHifiResponse() - Process domain list";
@@ -824,12 +832,23 @@ void HifiConnection::SendDomainCheckInRequest(uint32_t s)
         return;
     }
 
-    PacketType packet_type = (domain_connected) ? PacketType::DomainListRequest : PacketType::DomainConnectRequest;
+    bool requires_username_signature = !domain_connected && !domain_connection_token.isNull();
 
+    //Generate keypair
+    if (requires_username_signature && keypair_generator->GetPrivateKey().isEmpty()) {
+        qDebug() << "HifiConnection::SendDomainCheckInRequest() - Generating keypair for username signature";
+        num_requests = 0;
+        username_signature = QByteArray();
+        keypair_generator->GenerateKeypair();
+
+        return;
+    }
+
+    PacketType packet_type = (domain_connected) ? PacketType::DomainListRequest : PacketType::DomainConnectRequest;
     std::unique_ptr<Packet> domain_checkin_request_packet = Packet::Create(s,packet_type);
     QDataStream domain_checkin_data_stream(domain_checkin_request_packet.get());
 
-    if (!domain_connected) {
+    if (packet_type == PacketType::DomainConnectRequest) {
         domain_checkin_data_stream << ice_client_id;
 
         QByteArray protocol_version_sig = Utils::GetProtocolVersionSignature();
@@ -841,11 +860,70 @@ void HifiConnection::SendDomainCheckInRequest(uint32_t s)
     }
 
     //qDebug() << "list request" << (char)owner_type.load() << public_address << public_port << local_address << local_port << node_types_of_interest << domain_place_name;
-    //QString user_name = "test";
     domain_checkin_data_stream << owner_type.load() << public_address << public_port <<local_address << local_port
-                               << node_types_of_interest.toList() << domain_place_name; //TODO: user_name_signature
+                               << node_types_of_interest.toList() << domain_place_name;
 
-    if (domain_connected) {
+    if (!domain_connected && username != "") {
+        domain_checkin_data_stream << username;
+
+        // if this is a connect request, and we can present a username signature, send it along
+
+        if (!keypair_generator->GetPrivateKey().isEmpty()) {
+            QByteArray plaintext = username.toLower().toUtf8().append(domain_connection_token.toRfc4122());
+
+            //Sign plaintext
+            if (!keypair_generator->GetPrivateKey().isEmpty()) {
+                const char* private_key_data = keypair_generator->GetPrivateKey().constData();
+                RSA* rsa_private_key = d2i_RSAPrivateKey(NULL,
+                                                       reinterpret_cast<const unsigned char**>(&private_key_data),
+                                                       keypair_generator->GetPrivateKey().size());
+                if (rsa_private_key) {
+                    QByteArray signature(RSA_size(rsa_private_key), 0);
+                    unsigned int signature_bytes = 0;
+
+                    QByteArray hashed_plaintext = QCryptographicHash::hash(plaintext, QCryptographicHash::Sha256);
+
+                    int encrypt_return = RSA_sign(NID_sha256,
+                                                 reinterpret_cast<const unsigned char*>(hashed_plaintext.constData()),
+                                                 hashed_plaintext.size(),
+                                                 reinterpret_cast<unsigned char*>(signature.data()),
+                                                 &signature_bytes,
+                                                 rsa_private_key);
+
+                    // free the private key RSA struct now that we are done with it
+                    RSA_free(rsa_private_key);
+
+                    if (encrypt_return != -1) {
+                        qDebug() << "HERE5";
+                        username_signature = signature;
+                        qDebug() << username_signature;
+                    }
+                    else {
+                        username_signature = QByteArray();
+                    }
+                } else {
+                    qDebug() << "Could not create RSA struct from QByteArray private key.";
+                }
+            }
+            else {
+                username_signature = QByteArray();
+            }
+
+            if (!username_signature.isEmpty()) {
+                qDebug() << "Returning username" << username
+                    << "signed with connection UUID" << uuidStringWithoutCurlyBraces(domain_connection_token);
+            } else {
+                qDebug() << "Error signing username with connection token";
+                qDebug() << "Will re-attempt on next domain-server check in.";
+            }
+        }
+
+        if (requires_username_signature && !username_signature.isEmpty()) {
+            domain_checkin_data_stream << username_signature;
+        }
+    }
+
+    if (packet_type == PacketType::DomainListRequest) {
         // Source domain list packets
         domain_checkin_request_packet->WriteSourceID(local_id);
     }
@@ -890,6 +968,9 @@ void HifiConnection::ClientMessageReceived(const QString &message)
     QJsonDocument doc;
     doc = QJsonDocument::fromJson(message.toLatin1());
     QJsonObject obj = doc.object();
+
+    if (!obj.keys().contains("type")) return;
+
     QString type = obj["type"].toString();
 
     if (type == "domain") {
@@ -908,6 +989,12 @@ void HifiConnection::ClientMessageReceived(const QString &message)
             request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
             QNetworkReply * domain_reply = nam->get(request);
             connect(domain_reply, SIGNAL(finished()), this, SLOT(DomainRequestFinished()));
+        }
+
+        if (username == "") {
+            if (obj.keys().contains("username")) {
+                username = obj["username"].toString();
+            }
         }
     }
     else if (type == "offer") {

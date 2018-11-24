@@ -26,6 +26,7 @@
 #include "packet.h"
 #include "node.h"
 #include "utils.h"
+#include "rsakeypairgenerator.h"
 
 #include "portableendian.h"
 
@@ -129,6 +130,7 @@ private:
 
     bool started_hifi_connect;
 
+    RSAKeypairGenerator * keypair_generator;
     bool has_completed_current_request;
     bool domain_connected;
     uint32_t num_requests;
@@ -141,6 +143,9 @@ private:
     std::atomic<NodeType_t> owner_type;
     NodeSet node_types_of_interest;
 
+    QString username;
+    QUuid domain_connection_token;
+    QByteArray username_signature;
     bool started_domain_connect;
 
     QUuid session_id;

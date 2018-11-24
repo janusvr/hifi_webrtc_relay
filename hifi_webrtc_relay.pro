@@ -23,7 +23,8 @@ SOURCES += main.cpp \
     utils.cpp \
     node.cpp \
     hmacauth.cpp \
-    hificonnection.cpp
+    hificonnection.cpp \
+    rsakeypairgenerator.cpp
 
 HEADERS += \
     task.h \
@@ -32,7 +33,8 @@ HEADERS += \
     node.h \
     hmacauth.h \
     portableendian.h \
-    hificonnection.h
+    hificonnection.h \
+    rsakeypairgenerator.h
 
 INCLUDEPATH +="./resources/librtcdcpp/include"
 unix:!macx:LIBS += -L"$$PWD/resources/librtcdcpp/lib/linux" -lrtcdcpp

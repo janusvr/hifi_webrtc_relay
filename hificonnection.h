@@ -93,6 +93,7 @@ public Q_SLOTS:
     void ErrorTestingLocalSocket();
 
     void DomainRequestFinished();
+    void KeypairRequestFinished();
 
     void StartIce();
     void StartStun();
@@ -146,6 +147,7 @@ private:
     QString username;
     QUuid domain_connection_token;
     QByteArray username_signature;
+    bool waiting_for_keypair;
     bool started_domain_connect;
 
     QUuid session_id;

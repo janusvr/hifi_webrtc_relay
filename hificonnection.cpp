@@ -6,6 +6,7 @@ HifiConnection::HifiConnection(QWebSocket * s)
 {
     username = "";
     keypair_generator = new RSAKeypairGenerator();
+    waiting_for_keypair = false;
 
     domain_name = "";
     domain_place_name = "";
@@ -290,6 +291,7 @@ void HifiConnection::DomainRequestFinished()
             }
         }
         domain_reply->close();
+        domain_reply->deleteLater();
     }
 
     qDebug() << "HifiConnection::domainRequestFinished() - Domain name" << domain_name;
@@ -826,6 +828,40 @@ void HifiConnection::SendDomainCheckIn()
     SendDomainCheckInRequest();
 }
 
+
+void HifiConnection::KeypairRequestFinished()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+    if (reply) {
+        // double check if the finished network reply had a session ID in the header and make
+        // sure that our session ID matches that value if so
+        /*if (reply->hasRawHeader(METAVERSE_SESSION_ID_HEADER)) {
+            session_id = networkReply->rawHeader(METAVERSE_SESSION_ID_HEADER);
+        }*/
+
+        if (reply->error() == QNetworkReply::NoError) {
+            qDebug() << "Uploaded public key to Metaverse API. RSA keypair generation is completed.";
+            waiting_for_keypair = false;
+
+            //qDebug(networking) << "Received JSON response from metaverse API that has no matching callback.";
+            //qDebug(networking) << QJsonDocument::fromJson(networkReply->readAll());
+        } else {
+            qWarning() << "Public key upload failed from AccountManager" << reply->errorString();
+
+            // we aren't waiting for a response any longer
+            waiting_for_keypair = false;
+            username = ""; // Reset username so user can still log in
+
+            //qDebug(networking) << "Received error response from metaverse API that has no matching callback.";
+            //qDebug(networking) << "Error" << networkReply->error() << "-" << networkReply->errorString();
+            //qDebug(networking) << networkReply->readAll();
+        }
+
+        reply->close();
+        reply->deleteLater();
+    }
+}
+
 void HifiConnection::SendDomainCheckInRequest(uint32_t s)
 {
     if (!finished_domain_id_request) {
@@ -841,8 +877,40 @@ void HifiConnection::SendDomainCheckInRequest(uint32_t s)
         username_signature = QByteArray();
         keypair_generator->GenerateKeypair();
 
+        if (!waiting_for_keypair) {
+            waiting_for_keypair = true;
+
+            // upload the public key so data-web has an up-to-date key
+            // setup a multipart upload to send up the public key
+            QHttpMultiPart* request_multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+
+            QHttpPart public_key_part;
+            public_key_part.setHeader(QNetworkRequest::ContentTypeHeader, QVariant("application/octet-stream"));
+            public_key_part.setHeader(QNetworkRequest::ContentDispositionHeader,
+                                QVariant("form-data; name=\"public_key\"; filename=\"public_key\""));
+            public_key_part.setBody(keypair_generator->GetPublicKey());
+            request_multipart->append(public_key_part);
+
+            QNetworkAccessManager * nam = new QNetworkAccessManager(this);
+            QNetworkRequest request;
+            const QByteArray HIGH_FIDELITY_USER_AGENT = "Mozilla/5.0 (HighFidelityInterface)";
+            const auto METAVERSE_SESSION_ID_HEADER = QString("HFM-SessionID").toLocal8Bit();
+            request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+            request.setHeader(QNetworkRequest::UserAgentHeader, HIGH_FIDELITY_USER_AGENT);
+            request.setRawHeader(METAVERSE_SESSION_ID_HEADER, uuidStringWithoutCurlyBraces(session_id).toLocal8Bit());
+            request.setUrl(QUrl("https://metaverse.highfidelity.com/api/v1/user/public_key"));
+
+            //TODO: Account manager authorization
+
+            QNetworkReply* reply = NULL;
+            reply = nam->put(request, request_multipart);
+
+            connect(reply, SIGNAL(finished()), this, SLOT(KeypairRequestFinished()));
+        }
+
         return;
     }
+    if (waiting_for_keypair) return;
 
     PacketType packet_type = (domain_connected) ? PacketType::DomainListRequest : PacketType::DomainConnectRequest;
     std::unique_ptr<Packet> domain_checkin_request_packet = Packet::Create(s,packet_type);
@@ -894,9 +962,8 @@ void HifiConnection::SendDomainCheckInRequest(uint32_t s)
                     RSA_free(rsa_private_key);
 
                     if (encrypt_return != -1) {
-                        qDebug() << "HERE5";
                         username_signature = signature;
-                        qDebug() << username_signature;
+                        //qDebug() << username_signature;
                     }
                     else {
                         username_signature = QByteArray();

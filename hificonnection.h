@@ -107,6 +107,9 @@ public Q_SLOTS:
     void ClientMessageReceived(const QString &message);
     void ServerDisconnected();
 
+    void RequestAccessTokenFinished();
+    void RequestAccessTokenError(QNetworkReply::NetworkError error);
+
 private:
 
     QString uuidStringWithoutCurlyBraces(const QUuid& uuid) {
@@ -145,6 +148,7 @@ private:
     NodeSet node_types_of_interest;
 
     QString username;
+    QString password;
     QUuid domain_connection_token;
     QByteArray username_signature;
     bool waiting_for_keypair;
@@ -182,6 +186,11 @@ private:
 
     quint64 client_timestamp;
     quint64 server_timestamp;
+
+    QString token;
+    QString refreshToken;
+    qlonglong expiryTimestamp;
+    QString tokenType;
 };
 
 #endif // HIFICONNECTION_H

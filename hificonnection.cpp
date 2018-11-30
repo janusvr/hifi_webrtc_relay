@@ -5,8 +5,10 @@
 HifiConnection::HifiConnection(QWebSocket * s)
 {
     username = "";
+    password = "";
     keypair_generator = new RSAKeypairGenerator();
     waiting_for_keypair = false;
+    token = "";
 
     domain_name = "";
     domain_place_name = "";
@@ -303,6 +305,39 @@ void HifiConnection::DomainRequestFinished()
         started_hifi_connect = true;
         Q_EMIT WebRTCConnectionReady();
     }
+}
+
+void HifiConnection::RequestAccessTokenFinished() {
+    QNetworkReply* reply = reinterpret_cast<QNetworkReply*>(sender());
+
+    QJsonDocument response = QJsonDocument::fromJson(reply->readAll());
+    const QJsonObject& root_object = response.object();
+
+    if (!root_object.contains("error")) {
+        // construct an OAuthAccessToken from the json object
+
+        if (!root_object.contains("access_token") || !root_object.contains("expires_in")
+            || !root_object.contains("token_type")) {
+            qDebug() << "Received a response for password grant that is missing one or more expected values.";
+        } else {
+            // clear the path from the response URL so we have the right root URL for this access token
+            QUrl url = reply->url();
+            url.setPath("");
+
+            qDebug() << "Storing an account with access-token for" << url.toString();
+
+            token = root_object["access_token"].toString();
+            refreshToken = root_object["refresh_token"].toString();
+            expiryTimestamp = QDateTime::currentMSecsSinceEpoch() + (root_object["expires_in"].toDouble() * 1000);
+            tokenType = root_object["token_type"].toString();
+        }
+    } else {
+        qDebug() <<  "Error in response for password grant -" << root_object["error_description"].toString();
+    }
+}
+
+void HifiConnection::RequestAccessTokenError(QNetworkReply::NetworkError error) {
+    qDebug() << "HifiConnection: failed to fetch access token - " << error;
 }
 
 void HifiConnection::StartStun()
@@ -638,6 +673,10 @@ void HifiConnection::ParseDatagram(QByteArray datagram)
         QString reason = QString::fromUtf8(utfReason.constData(), reasonSize);*/
 
         qDebug() << "HifiConnection::ParseHifiResponse() - DomainConnectionDenied - Code: " << reasonCode;  //"Reason: "<< reason;
+
+        if (reasonCode == 2) {
+            username = "";
+        }
     }
 }
 
@@ -891,16 +930,19 @@ void HifiConnection::SendDomainCheckInRequest(uint32_t s)
             public_key_part.setBody(keypair_generator->GetPublicKey());
             request_multipart->append(public_key_part);
 
-            QNetworkAccessManager * nam = new QNetworkAccessManager(this);
-            QNetworkRequest request;
             const QByteArray HIGH_FIDELITY_USER_AGENT = "Mozilla/5.0 (HighFidelityInterface)";
             const auto METAVERSE_SESSION_ID_HEADER = QString("HFM-SessionID").toLocal8Bit();
+            const QByteArray ACCESS_TOKEN_AUTHORIZATION_HEADER = "Authorization";
+
+            QNetworkAccessManager * nam = new QNetworkAccessManager(this);
+            QNetworkRequest request;
             request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
             request.setHeader(QNetworkRequest::UserAgentHeader, HIGH_FIDELITY_USER_AGENT);
             request.setRawHeader(METAVERSE_SESSION_ID_HEADER, uuidStringWithoutCurlyBraces(session_id).toLocal8Bit());
+            if (token != "") {
+                request.setRawHeader(ACCESS_TOKEN_AUTHORIZATION_HEADER, QString("Bearer %1").arg(token).toUtf8());
+            }
             request.setUrl(QUrl("https://metaverse.highfidelity.com/api/v1/user/public_key"));
-
-            //TODO: Account manager authorization
 
             QNetworkReply* reply = NULL;
             reply = nam->put(request, request_multipart);
@@ -1052,15 +1094,36 @@ void HifiConnection::ClientMessageReceived(const QString &message)
             qDebug() << "HifiConnection::ClientMessageReceived - Looking up domain ID for domain: " << domain_name;
 
             QNetworkAccessManager * nam = new QNetworkAccessManager(this);
-            QNetworkRequest request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
-            request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-            QNetworkReply * domain_reply = nam->get(request);
-            connect(domain_reply, SIGNAL(finished()), this, SLOT(DomainRequestFinished()));
+            QNetworkRequest id_request("https://metaverse.highfidelity.com/api/v1/places/" + domain_name);
+            id_request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+            QNetworkReply * reply = nam->get(id_request);
+            connect(reply, SIGNAL(finished()), this, SLOT(DomainRequestFinished()));
         }
 
         if (username == "") {
-            if (obj.keys().contains("username")) {
+            if (obj.keys().contains("username") && obj.keys().contains("password")) {
                 username = obj["username"].toString();
+                password = obj["password"].toString();
+
+                QNetworkAccessManager * nam = new QNetworkAccessManager(this);
+                QNetworkRequest user_request;
+                const QByteArray HIGH_FIDELITY_USER_AGENT = "Mozilla/5.0 (HighFidelityInterface)";
+                const QString ACCOUNT_MANAGER_REQUESTED_SCOPE = "owner";
+                user_request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, true);
+                user_request.setHeader(QNetworkRequest::UserAgentHeader, HIGH_FIDELITY_USER_AGENT);
+
+                QByteArray post_data;
+                post_data.append("grant_type=password&");
+                post_data.append("username=" + username + "&");
+                post_data.append("password=" + QUrl::toPercentEncoding(password) + "&");
+                post_data.append("scope=" + ACCOUNT_MANAGER_REQUESTED_SCOPE);
+
+                user_request.setUrl(QUrl("https://metaverse.highfidelity.com/oauth/token"));
+                user_request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+                QNetworkReply* reply = nam->post(user_request, post_data);
+                connect(reply, &QNetworkReply::finished, this, &HifiConnection::RequestAccessTokenFinished);
+                connect(reply, SIGNAL(error(QNetworkReply::NetworkError)), this, SLOT(RequestAccessTokenError(QNetworkReply::NetworkError)));
             }
         }
     }

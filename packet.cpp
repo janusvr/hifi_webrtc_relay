@@ -2,80 +2,80 @@
 
 PacketVersion VersionForPacketType(PacketType packetType) {
     switch (packetType) {
-        case PacketType::StunResponse:
-            return 17;
-        case PacketType::DomainList:
-            return static_cast<PacketVersion>(DomainListVersion::AuthenticationOptional);
-        case PacketType::EntityAdd:
-        case PacketType::EntityClone:
-        case PacketType::EntityEdit:
-        case PacketType::EntityData:
-        case PacketType::EntityPhysics:
-            return static_cast<PacketVersion>(EntityVersion::FixedLightSerialization);
-        case PacketType::EntityQuery:
-            return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
-        case PacketType::AvatarIdentity:
-        case PacketType::AvatarData:
-        case PacketType::BulkAvatarData:
-        case PacketType::KillAvatar:
-            return static_cast<PacketVersion>(AvatarMixerPacketVersion::FarGrabJointsRedux);
-        case PacketType::MessagesData:
-            return static_cast<PacketVersion>(MessageDataVersion::TextOrBinaryData);
-        // ICE packets
-        case PacketType::ICEServerPeerInformation:
-            return 17;
-        case PacketType::ICEServerHeartbeatACK:
-            return 17;
-        case PacketType::ICEServerQuery:
-            return 17;
-        case PacketType::ICEServerHeartbeat:
-            return 18; // ICE Server Heartbeat signing
-        case PacketType::ICEPing:
-            return static_cast<PacketVersion>(IcePingVersion::SendICEPeerID);
-        case PacketType::ICEPingReply:
-            return 17;
-        case PacketType::ICEServerHeartbeatDenied:
-            return 17;
-        case PacketType::AssetMappingOperation:
-        case PacketType::AssetMappingOperationReply:
-        case PacketType::AssetGetInfo:
-        case PacketType::AssetGet:
-        case PacketType::AssetUpload:
-            return static_cast<PacketVersion>(AssetServerPacketVersion::BakingTextureMeta);
-        case PacketType::NodeIgnoreRequest:
-            return 18; // Introduction of node ignore request (which replaced an unused packet tpye)
+    case PacketType::StunResponse:
+        return 17;
+    case PacketType::DomainList:
+        return static_cast<PacketVersion>(DomainListVersion::AuthenticationOptional);
+    case PacketType::EntityAdd:
+    case PacketType::EntityClone:
+    case PacketType::EntityEdit:
+    case PacketType::EntityData:
+    case PacketType::EntityPhysics:
+        return static_cast<PacketVersion>(EntityVersion::FixedLightSerialization);
+    case PacketType::EntityQuery:
+        return static_cast<PacketVersion>(EntityQueryPacketVersion::ConicalFrustums);
+    case PacketType::AvatarIdentity:
+    case PacketType::AvatarData:
+    case PacketType::BulkAvatarData:
+    case PacketType::KillAvatar:
+        return static_cast<PacketVersion>(AvatarMixerPacketVersion::JointTransScaled);
+    case PacketType::MessagesData:
+        return static_cast<PacketVersion>(MessageDataVersion::TextOrBinaryData);
+    // ICE packets
+    case PacketType::ICEServerPeerInformation:
+        return 17;
+    case PacketType::ICEServerHeartbeatACK:
+        return 17;
+    case PacketType::ICEServerQuery:
+        return 17;
+    case PacketType::ICEServerHeartbeat:
+        return 18; // ICE Server Heartbeat signing
+    case PacketType::ICEPing:
+        return static_cast<PacketVersion>(IcePingVersion::SendICEPeerID);
+    case PacketType::ICEPingReply:
+        return 17;
+    case PacketType::ICEServerHeartbeatDenied:
+        return 17;
+    case PacketType::AssetMappingOperation:
+    case PacketType::AssetMappingOperationReply:
+    case PacketType::AssetGetInfo:
+    case PacketType::AssetGet:
+    case PacketType::AssetUpload:
+        return static_cast<PacketVersion>(AssetServerPacketVersion::BakingTextureMeta);
+    case PacketType::NodeIgnoreRequest:
+        return 18; // Introduction of node ignore request (which replaced an unused packet tpye)
 
-        case PacketType::DomainConnectionDenied:
-            return static_cast<PacketVersion>(DomainConnectionDeniedVersion::IncludesExtraInfo);
+    case PacketType::DomainConnectionDenied:
+        return static_cast<PacketVersion>(DomainConnectionDeniedVersion::IncludesExtraInfo);
 
-        case PacketType::DomainConnectRequest:
-            return static_cast<PacketVersion>(DomainConnectRequestVersion::AlwaysHasMachineFingerprint);
+    case PacketType::DomainConnectRequest:
+        return static_cast<PacketVersion>(DomainConnectRequestVersion::AlwaysHasMachineFingerprint);
 
-        case PacketType::DomainServerAddedNode:
-            return static_cast<PacketVersion>(DomainServerAddedNodeVersion::PermissionsGrid);
+    case PacketType::DomainServerAddedNode:
+        return static_cast<PacketVersion>(DomainServerAddedNodeVersion::PermissionsGrid);
 
-        case PacketType::EntityScriptCallMethod:
-            return static_cast<PacketVersion>(EntityScriptCallMethodVersion::ClientCallable);
+    case PacketType::EntityScriptCallMethod:
+        return static_cast<PacketVersion>(EntityScriptCallMethodVersion::ClientCallable);
 
-        case PacketType::MixedAudio:
-        case PacketType::SilentAudioFrame:
-        case PacketType::InjectAudio:
-        case PacketType::MicrophoneAudioNoEcho:
-        case PacketType::MicrophoneAudioWithEcho:
-        case PacketType::AudioStreamStats:
-            return static_cast<PacketVersion>(AudioVersion::HighDynamicRangeVolume);
-        case PacketType::DomainSettings:
-            return 18;  // replace min_avatar_scale and max_avatar_scale with min_avatar_height and max_avatar_height
-        case PacketType::Ping:
-            return static_cast<PacketVersion>(PingVersion::IncludeConnectionID);
-        case PacketType::AvatarQuery:
-            return static_cast<PacketVersion>(AvatarQueryVersion::ConicalFrustums);
-        case PacketType::AvatarIdentityRequest:
-            return 22;
-        case PacketType::EntityQueryInitialResultsComplete:
-            return static_cast<PacketVersion>(EntityVersion::ParticleSpin);
-        default:
-            return 22;
+    case PacketType::MixedAudio:
+    case PacketType::SilentAudioFrame:
+    case PacketType::InjectAudio:
+    case PacketType::MicrophoneAudioNoEcho:
+    case PacketType::MicrophoneAudioWithEcho:
+    case PacketType::AudioStreamStats:
+        return static_cast<PacketVersion>(AudioVersion::HighDynamicRangeVolume);
+    case PacketType::DomainSettings:
+        return 18;  // replace min_avatar_scale and max_avatar_scale with min_avatar_height and max_avatar_height
+    case PacketType::Ping:
+        return static_cast<PacketVersion>(PingVersion::IncludeConnectionID);
+    case PacketType::AvatarQuery:
+        return static_cast<PacketVersion>(AvatarQueryVersion::ConicalFrustums);
+    case PacketType::AvatarIdentityRequest:
+        return 22;
+    case PacketType::EntityQueryInitialResultsComplete:
+        return static_cast<PacketVersion>(EntityVersion::ParticleSpin);
+    default:
+        return 22;
     }
 }
 
